@@ -26,6 +26,71 @@ def read_previous() -> dict[str, Any] | None:
         return None
 
 
+def opportunity_exchanges(opportunity: dict[str, Any]) -> set[str]:
+    values = opportunity.get("exchanges", [])
+    if not isinstance(values, list):
+        return set()
+    return {str(value).lower() for value in values if value}
+
+
+def missing_file_exchanges(payload: dict[str, Any]) -> set[str]:
+    exchanges = payload.get("exchanges", {})
+    known = set(exchanges) if isinstance(exchanges, dict) else set()
+    missing: set[str] = set()
+    for error in payload.get("errors", []):
+        message = str(error)
+        if "No such file or directory" not in message:
+            continue
+        prefix = message.split(maxsplit=1)[0].lower()
+        if prefix in known:
+            missing.add(prefix)
+    return missing
+
+
+def preserve_missing_exchange_data(
+    payload: dict[str, Any],
+    previous: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not previous:
+        return payload
+
+    missing = missing_file_exchanges(payload)
+    if not missing:
+        return payload
+
+    current = [
+        item
+        for item in payload.get("opportunities", [])
+        if isinstance(item, dict) and not (opportunity_exchanges(item) & missing)
+    ]
+    preserved = [
+        item
+        for item in previous.get("opportunities", [])
+        if isinstance(item, dict) and opportunity_exchanges(item) & missing
+    ]
+
+    by_id: dict[str, dict[str, Any]] = {}
+    for item in current + preserved:
+        identifier = str(item.get("id", ""))
+        if identifier:
+            by_id[identifier] = item
+
+    payload["opportunities"] = sorted(
+        by_id.values(),
+        key=lambda item: (
+            str(item.get("strategy_type", "")),
+            str(item.get("underlying", "")),
+            str(item.get("pair_id", "")),
+        ),
+    )
+    payload["stale_exchanges"] = sorted(missing)
+    payload.setdefault("errors", []).append(
+        "using previous opportunity data for missing exchanges: "
+        + ", ".join(sorted(missing))
+    )
+    return payload
+
+
 def validate(payload: dict[str, Any], previous: dict[str, Any] | None) -> None:
     opportunities = payload.get("opportunities")
     if not isinstance(opportunities, list) or not opportunities:
@@ -44,7 +109,7 @@ def validate(payload: dict[str, Any], previous: dict[str, Any] | None) -> None:
         )
 
     previous_count = len(previous.get("opportunities", [])) if previous else 0
-    minimum_count = max(20, int(previous_count * 0.5)) if previous_count else 20
+    minimum_count = max(20, int(previous_count * 0.8)) if previous_count else 20
     if len(opportunities) < minimum_count:
         raise RuntimeError(
             f"opportunity count dropped from {previous_count} to {len(opportunities)}; "
@@ -80,6 +145,7 @@ def main() -> int:
 
     previous = read_previous()
     payload = build_payload()
+    payload = preserve_missing_exchange_data(payload, previous)
     validate(payload, previous)
     write_payload(payload)
     print(
