@@ -1,8 +1,7 @@
 dist/
 __pycache__/
 *.pyc
-collectors/**/outputs/*.csv
-collectors/**/outputs/*.json
+collectors/**/outputs/*
 scripts/turnover_24h.json
 preview*.log
 static-*.png
