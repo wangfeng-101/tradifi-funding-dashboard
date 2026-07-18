@@ -1,0 +1,153 @@
+{
+  "exchanges": {
+    "binance": {
+      "label": "Binance",
+      "accent": "#f0b90b",
+      "connected": true
+    },
+    "okx": {
+      "label": "OKX",
+      "accent": "#e7ece8",
+      "connected": true
+    },
+    "gate": {
+      "label": "Gate",
+      "accent": "#2f78ff",
+      "connected": true
+    },
+    "bitget": {
+      "label": "Bitget",
+      "accent": "#22c9d6",
+      "connected": true
+    },
+    "kucoin": {
+      "label": "KuCoin",
+      "accent": "#24d6a3",
+      "connected": true
+    },
+    "bybit": {
+      "label": "Bybit",
+      "accent": "#f4a61c",
+      "connected": true
+    },
+    "phemex": {
+      "label": "Phemex",
+      "accent": "#5b8cff",
+      "connected": true
+    }
+  },
+  "market_sources": {
+    "binance": {
+      "funding_history_path": "../collectors/binance/outputs/binance_tradifi_funding_8h.csv",
+      "funding_underlying_column": "base_asset",
+      "funding_symbol_column": "symbol",
+      "funding_listing_column": "onboard_time_beijing",
+      "funding_time_column": "funding_time_utc",
+      "funding_rate_pct_column": "funding_rate_pct",
+      "funding_interval_column": "configured_interval_hours",
+      "funding_category_column": "contract_type",
+      "spot_path": "../collectors/binance/outputs/binance_tradifi_spot_margin_listing_times.csv",
+      "spot_underlying_column": "underlying",
+      "spot_symbol_column": "symbol",
+      "spot_listing_column": "spot_first_kline_time_beijing"
+    },
+    "kucoin": {
+      "funding_history_path": "../collectors/kucoin/outputs/kucoin_tradifi_funding_8h.csv",
+      "funding_underlying_column": "base_currency",
+      "funding_symbol_column": "symbol",
+      "funding_listing_column": "first_open_time_beijing",
+      "funding_time_column": "funding_time_utc",
+      "funding_rate_pct_column": "funding_rate_pct",
+      "funding_interval_column": "configured_interval_hours",
+      "funding_category_column": "market_type"
+    },
+    "okx": {
+      "funding_history_path": "../collectors/multi_exchange/outputs/okx_tradifi_funding.csv",
+      "funding_underlying_column": "underlying",
+      "funding_symbol_column": "symbol",
+      "funding_listing_column": "listing_time_beijing",
+      "funding_time_column": "funding_time_utc",
+      "funding_rate_pct_column": "funding_rate_pct",
+      "funding_interval_column": "funding_interval_hours",
+      "funding_category_column": "category",
+      "ticker_path": "../collectors/multi_exchange/outputs/okx_tradifi_markets.csv"
+    },
+    "gate": {
+      "funding_history_path": "../collectors/multi_exchange/outputs/gate_tradifi_funding.csv",
+      "funding_underlying_column": "underlying",
+      "funding_symbol_column": "symbol",
+      "funding_listing_column": "listing_time_beijing",
+      "funding_time_column": "funding_time_utc",
+      "funding_rate_pct_column": "funding_rate_pct",
+      "funding_interval_column": "funding_interval_hours",
+      "funding_category_column": "category",
+      "spot_path": "../collectors/multi_exchange/outputs/gate_tradifi_markets.csv",
+      "spot_underlying_column": "underlying",
+      "spot_symbol_column": "symbol",
+      "spot_listing_column": "listing_time_beijing",
+      "spot_market_column": "market",
+      "spot_market_value": "spot",
+      "spot_turnover_column": "turnover_24h_usdt",
+      "ticker_path": "../collectors/multi_exchange/outputs/gate_tradifi_markets.csv"
+    },
+    "bitget": {
+      "funding_history_path": "../collectors/multi_exchange/outputs/bitget_tradifi_funding.csv",
+      "funding_underlying_column": "underlying",
+      "funding_symbol_column": "symbol",
+      "funding_listing_column": "listing_time_beijing",
+      "funding_time_column": "funding_time_utc",
+      "funding_rate_pct_column": "funding_rate_pct",
+      "funding_interval_column": "funding_interval_hours",
+      "funding_category_column": "category",
+      "spot_path": "../collectors/multi_exchange/outputs/bitget_tradifi_markets.csv",
+      "spot_underlying_column": "underlying",
+      "spot_symbol_column": "symbol",
+      "spot_listing_column": "listing_time_beijing",
+      "spot_market_column": "market",
+      "spot_market_value": "spot",
+      "spot_turnover_column": "turnover_24h_usdt",
+      "ticker_path": "../collectors/multi_exchange/outputs/bitget_tradifi_markets.csv"
+    },
+    "bybit": {
+      "funding_history_path": "../collectors/multi_exchange/outputs/bybit_tradifi_funding.csv",
+      "funding_underlying_column": "underlying",
+      "funding_symbol_column": "symbol",
+      "funding_listing_column": "listing_time_beijing",
+      "funding_time_column": "funding_time_utc",
+      "funding_rate_pct_column": "funding_rate_pct",
+      "funding_interval_column": "funding_interval_hours",
+      "funding_category_column": "category",
+      "ticker_path": "../collectors/multi_exchange/outputs/bybit_tradifi_markets.csv"
+    },
+    "phemex": {
+      "funding_history_path": "../collectors/multi_exchange/outputs/phemex_tradifi_funding.csv",
+      "funding_underlying_column": "underlying",
+      "funding_symbol_column": "symbol",
+      "funding_listing_column": "listing_time_beijing",
+      "funding_time_column": "funding_time_utc",
+      "funding_rate_pct_column": "funding_rate_pct",
+      "funding_interval_column": "funding_interval_hours",
+      "funding_category_column": "category",
+      "ticker_path": "../collectors/multi_exchange/outputs/phemex_tradifi_markets.csv"
+    }
+  },
+  "comparison_sources": [],
+  "latest_sources": {
+    "binance": {
+      "path": "../collectors/binance/outputs/binance_tradifi_funding_8h_latest.csv",
+      "underlying_column": "base_asset",
+      "symbol_column": "symbol",
+      "rate_pct_column": "funding_rate_pct",
+      "time_column": "funding_time_beijing",
+      "price_column": "mark_price"
+    },
+    "kucoin": {
+      "path": "../collectors/kucoin/outputs/kucoin_tradifi_funding_8h_latest.csv",
+      "underlying_column": "base_currency",
+      "symbol_column": "symbol",
+      "rate_pct_column": "funding_rate_pct",
+      "time_column": "funding_time_beijing",
+      "price_column": "current_mark_price"
+    }
+  }
+}

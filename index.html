@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TradFi Funding 年化套利监控</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-block">
+      <div class="brand-mark" aria-hidden="true">F</div>
+      <div>
+        <h1>TradFi Funding 年化套利监控</h1>
+        <p id="data-time">正在读取数据</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <div id="exchange-status" class="exchange-status" aria-label="已接入交易所"></div>
+      <label class="auto-refresh"><input id="auto-refresh" type="checkbox" checked> 自动刷新</label>
+      <button id="refresh-button" class="icon-button" type="button" title="读取最新发布数据" aria-label="读取最新发布数据">↻</button>
+      <button id="export-button" class="command-button" type="button">导出 CSV</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="strategy-bar" aria-label="套利类型">
+      <div id="strategy-tabs" class="strategy-tabs"></div>
+    </section>
+
+    <section class="window-bar" aria-label="统计周期">
+      <div id="window-tabs" class="segmented"></div>
+    </section>
+
+    <section id="metrics" class="metrics" aria-label="概览"></section>
+
+    <section class="workspace">
+      <aside class="filters" aria-label="筛选条件">
+        <div class="filter-heading">
+          <h2>筛选</h2>
+          <div class="filter-actions">
+            <button id="mobile-filter-toggle" class="mobile-filter-toggle" type="button" aria-expanded="false" title="展开筛选">⌄</button>
+            <button id="reset-button" class="text-button" type="button">重置</button>
+          </div>
+        </div>
+
+        <label class="field-label" for="search-input">币种或合约</label>
+        <input id="search-input" class="text-input" type="search" placeholder="例如 NVDA" autocomplete="off">
+
+        <label class="field-label" for="min-spread">最小年化差值（%）</label>
+        <input id="min-spread" class="text-input" type="number" min="0" step="0.01" value="0">
+
+        <label class="field-label" for="route-filter">收款方向</label>
+        <select id="route-filter" class="select-input">
+          <option value="all">全部方向</option>
+        </select>
+
+        <label class="field-label" for="pair-filter">交易所组合</label>
+        <select id="pair-filter" class="select-input">
+          <option value="all">全部组合</option>
+        </select>
+
+        <label class="field-label" for="sort-select">排序</label>
+        <select id="sort-select" class="select-input">
+          <option value="spread_desc">年化差值从高到低</option>
+          <option value="latest_desc">最新期差值从高到低</option>
+          <option value="symbol_asc">币种名称</option>
+        </select>
+
+        <label class="check-row">
+          <input id="full-window" type="checkbox">
+          <span>仅完整周期</span>
+        </label>
+      </aside>
+
+      <section class="results" aria-labelledby="result-title">
+        <div class="results-heading">
+          <div>
+            <h2 id="result-title">套利候选</h2>
+            <p id="result-count">0 条</p>
+          </div>
+          <div class="legend" aria-label="方向图例">
+            <span><i class="dot receive"></i>做空腿</span>
+            <span><i class="dot pay"></i>做多腿</span>
+          </div>
+        </div>
+
+        <div id="error-banner" class="error-banner" hidden></div>
+        <div class="table-shell">
+          <table>
+            <thead>
+              <tr>
+                <th>币种</th>
+                <th>交易腿</th>
+                <th>最新 Funding</th>
+                <th>年化 Funding</th>
+                <th>年化差值</th>
+                <th>24h 成交额（万 USDT）</th>
+                <th>周期内记录数</th>
+                <th>共同上线</th>
+              </tr>
+            </thead>
+            <tbody id="opportunity-body"></tbody>
+          </table>
+          <div id="empty-state" class="empty-state" hidden>没有符合当前条件的币种</div>
+        </div>
+        <div id="pagination" class="pagination" aria-label="结果分页"></div>
+      </section>
+    </section>
+  </main>
+
+  <dialog id="detail-dialog" class="detail-dialog">
+    <div class="dialog-head">
+      <div>
+        <p id="detail-pair" class="eyebrow"></p>
+        <h2 id="detail-title"></h2>
+      </div>
+      <button id="close-dialog" class="icon-button" type="button" aria-label="关闭明细" title="关闭">×</button>
+    </div>
+    <div id="detail-content"></div>
+  </dialog>
+
+  <script src="./script.js" defer></script>
+</body>
+</html>

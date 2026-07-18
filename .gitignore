@@ -1,0 +1,11 @@
+dist/
+__pycache__/
+*.pyc
+collectors/**/outputs/*.csv
+collectors/**/outputs/*.json
+scripts/turnover_24h.json
+preview*.log
+static-*.png
+.chrome-*/
+.edge-*/
+!collectors/**/outputs/.gitkeep

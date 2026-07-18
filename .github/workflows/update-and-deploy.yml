@@ -1,0 +1,88 @@
+name: Update and deploy TradFi dashboard
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */8 * * *"
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: tradifi-dashboard
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Restore funding history cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            collectors/binance/outputs
+            collectors/kucoin/outputs
+            collectors/multi_exchange/outputs
+            scripts/turnover_24h.json
+          key: funding-history-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            funding-history-${{ runner.os }}-
+
+      - name: Update Binance products and funding
+        continue-on-error: true
+        run: |
+          python collectors/binance/fetch_binance_tradifi_symbols.py
+          python collectors/binance/fetch_binance_tradifi_listing_times.py
+          python collectors/binance/fetch_binance_tradifi_funding_8h.py
+
+      - name: Update KuCoin funding
+        continue-on-error: true
+        run: python collectors/kucoin/fetch_kucoin_tradifi_funding_8h.py
+
+      - name: Update OKX, Gate, Bitget, Bybit and Phemex
+        continue-on-error: true
+        run: python collectors/multi_exchange/fetch_tradifi_data.py --exchange all --history-days 35 --workers 10
+
+      - name: Build and validate dashboard data
+        run: python scripts/generate_dashboard_data.py --refresh-turnover
+
+      - name: Build deployable files
+        run: python scripts/build_site.py
+
+      - name: Commit the latest public data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/dashboard.json
+          if git diff --cached --quiet; then
+            echo "No dashboard data changes"
+          else
+            git commit -m "data: update TradFi funding dashboard"
+            git push
+          fi
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
