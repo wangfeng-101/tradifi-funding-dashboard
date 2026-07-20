@@ -196,6 +196,8 @@ def market_row(
 def discover_okx() -> list[dict[str, Any]]:
     instruments = http_json("https://www.okx.com/api/v5/public/instruments", {"instType": "SWAP"})
     tickers = http_json("https://www.okx.com/api/v5/market/tickers", {"instType": "SWAP"})
+    spot_instruments = http_json("https://www.okx.com/api/v5/public/instruments", {"instType": "SPOT"})
+    spot_tickers = http_json("https://www.okx.com/api/v5/market/tickers", {"instType": "SPOT"})
     ticker_by_symbol: dict[str, dict[str, Any]] = {}
     for item in tickers.get("data", []):
         last = number(item.get("last"))
@@ -220,6 +222,34 @@ def discover_okx() -> list[dict[str, Any]]:
                 "okx", "perp", symbol, base, base, "USDT", item.get("state", ""),
                 f"rwa_group_{item.get('groupId')}", from_milliseconds(item.get("listTime")), 8,
                 ticker_by_symbol.get(symbol),
+            )
+        )
+
+    spot_ticker_by_symbol = {
+        item.get("instId", ""): {
+            "last": number(item.get("last")),
+            "mark": None,
+            "bid": number(item.get("bidPx")),
+            "ask": number(item.get("askPx")),
+            "turnover": number(item.get("volCcy24h")),
+        }
+        for item in spot_tickers.get("data", [])
+    }
+    for item in spot_instruments.get("data", []):
+        if (
+            item.get("state") != "live"
+            or item.get("quoteCcy") != "USDT"
+            or str(item.get("instCategory", "")) != "3"
+        ):
+            continue
+        symbol = item.get("instId", "")
+        raw_base = str(item.get("baseCcy", "")).upper()
+        underlying = raw_base[1:] if raw_base.startswith("X") else raw_base
+        rows.append(
+            market_row(
+                "okx", "spot", symbol, underlying, raw_base, "USDT", item.get("state", ""),
+                "stock", from_milliseconds(item.get("listTime")), None,
+                spot_ticker_by_symbol.get(symbol),
             )
         )
     return rows

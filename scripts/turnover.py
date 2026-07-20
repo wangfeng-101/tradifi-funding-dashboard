@@ -30,6 +30,10 @@ SOURCES = {
         "url": "https://www.okx.com/api/v5/market/tickers?instType=SWAP",
         "kind": "okx",
     },
+    "okx_spot": {
+        "url": "https://www.okx.com/api/v5/market/tickers?instType=SPOT",
+        "kind": "okx_spot",
+    },
     "gate_spot": {
         "url": "https://api.gateio.ws/api/v4/spot/tickers",
         "kind": "gate_spot",
@@ -110,6 +114,14 @@ def normalize(source: dict[str, str], payload: Any) -> dict[str, float]:
             if last is not None and base_volume is not None:
                 result[str(item.get("instId", ""))] = last * base_volume
         return result
+    if kind == "okx_spot":
+        if str(payload.get("code")) != "0":
+            raise ValueError("unexpected OKX spot ticker response")
+        return {
+            str(item.get("instId", "")): value
+            for item in payload.get("data", [])
+            if (value := number(item.get("volCcy24h"))) is not None
+        }
     if kind == "gate_spot":
         return {
             str(item.get("currency_pair", "")): value
