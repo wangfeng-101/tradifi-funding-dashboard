@@ -1,0 +1,16 @@
+[Unit]
+Description=Update TradFi Funding Dashboard data
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=wangfeng
+Group=wangfeng
+WorkingDirectory=/home/wangfeng/workspace/refresh_tradfi
+Environment=PYTHON_BIN=/home/wangfeng/.local/share/uv/python/cpython-3.11-linux-x86_64-gnu/bin/python3.11
+ExecStart=/home/wangfeng/workspace/refresh_tradfi/deploy/update_dashboard.sh
+TimeoutStartSec=2h
+
+[Install]
+WantedBy=multi-user.target
