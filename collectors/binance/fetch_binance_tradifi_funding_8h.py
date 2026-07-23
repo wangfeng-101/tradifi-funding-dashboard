@@ -30,9 +30,11 @@ UTC = dt.timezone.utc
 BEIJING = dt.timezone(dt.timedelta(hours=8))
 REQUEST_TIMEOUT_SECONDS = 30
 MAX_RETRIES = 4
+MIN_REQUEST_INTERVAL_SECONDS = 0.75
 PAGE_LIMIT = 1000
 DEFAULT_FUNDING_INTERVAL_HOURS = 8
 INTERVAL_TOLERANCE_MINUTES = 5
+LAST_REQUEST_AT = 0.0
 
 HISTORY_FIELDS = [
     "symbol",
@@ -89,25 +91,36 @@ NORMALIZED_8H_FIELDS = [
 
 
 def fetch_json(url: str, params: dict[str, Any] | None = None) -> Any:
+    global LAST_REQUEST_AT
+
     full_url = url
     if params:
         full_url = f"{url}?{urllib.parse.urlencode(params)}"
 
     for attempt in range(1, MAX_RETRIES + 1):
+        elapsed = time.monotonic() - LAST_REQUEST_AT
+        if elapsed < MIN_REQUEST_INTERVAL_SECONDS:
+            time.sleep(MIN_REQUEST_INTERVAL_SECONDS - elapsed)
         request = urllib.request.Request(
             full_url,
             headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
         )
         try:
+            LAST_REQUEST_AT = time.monotonic()
             with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
-            retryable = exc.code in {418, 429, 500, 502, 503, 504}
+            retryable = exc.code in {403, 418, 429, 500, 502, 503, 504}
             if not retryable or attempt == MAX_RETRIES:
                 body = exc.read().decode("utf-8", errors="replace")
                 raise RuntimeError(f"HTTP {exc.code} from {url}: {body[:300]}") from exc
             retry_after = exc.headers.get("Retry-After")
-            delay = float(retry_after) if retry_after else 2 ** (attempt - 1)
+            if retry_after:
+                delay = float(retry_after)
+            elif exc.code == 403:
+                delay = 15 * (2 ** (attempt - 1))
+            else:
+                delay = 2 ** (attempt - 1)
         except (urllib.error.URLError, TimeoutError) as exc:
             if attempt == MAX_RETRIES:
                 raise RuntimeError(f"request failed for {url}: {exc}") from exc
