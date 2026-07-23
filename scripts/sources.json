@@ -124,6 +124,13 @@
       "funding_rate_pct_column": "funding_rate_pct",
       "funding_interval_column": "funding_interval_hours",
       "funding_category_column": "category",
+      "spot_path": "../collectors/multi_exchange/outputs/bybit_tradifi_markets.csv",
+      "spot_underlying_column": "underlying",
+      "spot_symbol_column": "symbol",
+      "spot_listing_column": "listing_time_beijing",
+      "spot_market_column": "market",
+      "spot_market_value": "spot",
+      "spot_turnover_column": "turnover_24h_usdt",
       "ticker_path": "../collectors/multi_exchange/outputs/bybit_tradifi_markets.csv"
     },
     "phemex": {

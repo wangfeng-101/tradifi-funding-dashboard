@@ -103,6 +103,11 @@ def normalize_bitget_spot(base: str) -> str:
     return value.upper()
 
 
+def normalize_bybit_xstock(base: str) -> str:
+    value = base.strip().upper()
+    return value[:-1] if value.endswith("X") else value
+
+
 def http_json(
     url: str,
     params: dict[str, Any] | None = None,
@@ -411,10 +416,38 @@ def bybit_instruments(category: str) -> list[dict[str, Any]]:
     return rows
 
 
+def bybit_spot_listing_time(symbol: str) -> dt.datetime | None:
+    try:
+        payload = http_json(
+            "https://api.bybit.com/v5/market/kline",
+            {"category": "spot", "symbol": symbol, "interval": "D", "limit": 1000},
+        )
+        timestamps = [
+            integer(row[0])
+            for row in payload.get("result", {}).get("list", [])
+            if isinstance(row, list) and row
+        ]
+        valid_timestamps = [value for value in timestamps if value and value > 0]
+        return from_milliseconds(min(valid_timestamps)) if valid_timestamps else None
+    except Exception:
+        return None
+
+
 def discover_bybit() -> list[dict[str, Any]]:
+    spots = bybit_instruments("spot")
     futures = bybit_instruments("linear")
+    spot_tickers = http_json("https://api.bybit.com/v5/market/tickers", {"category": "spot"})
     futures_tickers = http_json("https://api.bybit.com/v5/market/tickers", {"category": "linear"})
-    ticker_by_symbol = {
+    spot_ticker_by_symbol = {
+        item.get("symbol", ""): {
+            "turnover": number(item.get("turnover24h")),
+            "last": number(item.get("lastPrice")),
+            "bid": number(item.get("bid1Price")),
+            "ask": number(item.get("ask1Price")),
+        }
+        for item in spot_tickers.get("result", {}).get("list", [])
+    }
+    futures_ticker_by_symbol = {
         item.get("symbol", ""): {
             "turnover": number(item.get("turnover24h")),
             "last": number(item.get("lastPrice")),
@@ -426,6 +459,25 @@ def discover_bybit() -> list[dict[str, Any]]:
     }
 
     rows: list[dict[str, Any]] = []
+    for item in spots:
+        category = str(item.get("symbolType", "")).lower()
+        if (
+            item.get("status") != "Trading"
+            or item.get("quoteCoin") != "USDT"
+            or category != "xstocks"
+        ):
+            continue
+        symbol = item.get("symbol", "")
+        raw_base = str(item.get("baseCoin", "")).upper()
+        listing = from_milliseconds(item.get("launchTime")) or bybit_spot_listing_time(symbol)
+        rows.append(
+            market_row(
+                "bybit", "spot", symbol, normalize_bybit_xstock(raw_base), raw_base, "USDT",
+                item.get("status", ""), "stock", listing, None,
+                spot_ticker_by_symbol.get(symbol),
+            )
+        )
+
     for item in futures:
         category = str(item.get("symbolType", "")).lower()
         if (
@@ -441,7 +493,7 @@ def discover_bybit() -> list[dict[str, Any]]:
             market_row(
                 "bybit", "perp", symbol, base, base, "USDT", item.get("status", ""), category,
                 from_milliseconds(item.get("launchTime")), (number(item.get("fundingInterval")) or 480) / 60,
-                ticker_by_symbol.get(symbol),
+                futures_ticker_by_symbol.get(symbol),
             )
         )
     return rows

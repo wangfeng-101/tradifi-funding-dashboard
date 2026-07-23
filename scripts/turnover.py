@@ -54,6 +54,10 @@ SOURCES = {
         "url": "https://api.bybit.com/v5/market/tickers?category=linear",
         "kind": "bybit",
     },
+    "bybit_spot": {
+        "url": "https://api.bybit.com/v5/market/tickers?category=spot",
+        "kind": "bybit",
+    },
     "phemex_perp": {
         "url": "https://api.phemex.com/md/v2/ticker/24hr/all",
         "kind": "phemex",
