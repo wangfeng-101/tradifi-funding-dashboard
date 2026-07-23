@@ -1,4 +1,4 @@
-name: Update and deploy TradFi dashboard
+name: Deploy TradFi dashboard
 
 on:
   workflow_dispatch:
