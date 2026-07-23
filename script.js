@@ -12,8 +12,6 @@ const state = {
   sort: "spread_desc",
   page: 1,
   pageSize: 100,
-  autoRefresh: true,
-  timer: null,
 };
 
 const elements = {
@@ -32,7 +30,6 @@ const elements = {
   pair: document.querySelector("#pair-filter"),
   sort: document.querySelector("#sort-select"),
   fullOnly: document.querySelector("#full-window"),
-  autoRefresh: document.querySelector("#auto-refresh"),
   refresh: document.querySelector("#refresh-button"),
   export: document.querySelector("#export-button"),
   reset: document.querySelector("#reset-button"),
@@ -359,11 +356,6 @@ async function loadData() {
   }
 }
 
-function setAutoRefresh() {
-  clearInterval(state.timer);
-  state.timer = state.autoRefresh ? setInterval(loadData, 300_000) : null;
-}
-
 elements.windowTabs.addEventListener("click", (event) => {
   const button = event.target.closest("[data-window]");
   if (!button) return;
@@ -392,7 +384,6 @@ elements.route.addEventListener("change", () => { state.route = elements.route.v
 elements.pair.addEventListener("change", () => { state.pair = elements.pair.value; state.page = 1; render(); });
 elements.sort.addEventListener("change", () => { state.sort = elements.sort.value; state.page = 1; render(); });
 elements.fullOnly.addEventListener("change", () => { state.fullOnly = elements.fullOnly.checked; state.page = 1; render(); });
-elements.autoRefresh.addEventListener("change", () => { state.autoRefresh = elements.autoRefresh.checked; setAutoRefresh(); });
 elements.refresh.addEventListener("click", loadData);
 elements.export.addEventListener("click", exportCsv);
 elements.reset.addEventListener("click", () => {
@@ -427,4 +418,3 @@ elements.dialog.addEventListener("click", (event) => { if (event.target === elem
 
 if (window.matchMedia("(max-width: 620px)").matches) elements.filters.classList.add("mobile-collapsed");
 loadData();
-setAutoRefresh();

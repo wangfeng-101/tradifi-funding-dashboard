@@ -89,14 +89,14 @@ h1 { font-size: 17px; line-height: 1.25; }
 .exchange-chip.pending { opacity: 0.48; }
 .exchange-chip.pending::before { background: var(--muted); }
 
-.auto-refresh, .check-row {
+.check-row {
   display: flex;
   align-items: center;
   gap: 7px;
   color: var(--muted);
   white-space: nowrap;
 }
-.auto-refresh input, .check-row input { accent-color: var(--green); }
+.check-row input { accent-color: var(--green); }
 
 .icon-button, .command-button, .text-button {
   border: 1px solid var(--line);
@@ -292,7 +292,7 @@ tbody tr:hover { background: #171b17; }
 
 @media (max-width: 920px) {
   .topbar { align-items: flex-start; }
-  .exchange-status, .auto-refresh { display: none; }
+  .exchange-status { display: none; }
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .metric:nth-child(2) { border-right: 0; }
   .metric:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
