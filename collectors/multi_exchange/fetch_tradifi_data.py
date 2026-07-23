@@ -21,6 +21,7 @@ UTC = dt.timezone.utc
 BEIJING = dt.timezone(dt.timedelta(hours=8))
 TRADFI_CATEGORIES = {"stocks", "metals", "indices", "forex", "commodities"}
 EXCHANGES = ("okx", "gate", "bitget", "bybit", "phemex")
+LISTING_TIME_CACHE: dict[tuple[str, str, str], dt.datetime] = {}
 
 MARKET_FIELDS = [
     "exchange", "market", "symbol", "underlying", "raw_base", "quote", "status",
@@ -65,6 +66,14 @@ def from_seconds(value: Any) -> dt.datetime | None:
 
 def iso(value: dt.datetime | None, timezone: dt.tzinfo = UTC) -> str:
     return value.astimezone(timezone).isoformat() if value else ""
+
+
+def cached_listing_time(
+    exchange: str,
+    market: str,
+    symbol: str,
+) -> dt.datetime | None:
+    return LISTING_TIME_CACHE.get((exchange, market, symbol))
 
 
 def read_reference_underlyings() -> set[str]:
@@ -261,6 +270,9 @@ def discover_okx() -> list[dict[str, Any]]:
 
 
 def gate_spot_listing(symbol: str) -> dt.datetime | None:
+    cached = cached_listing_time("gate", "spot", symbol)
+    if cached:
+        return cached
     try:
         LIMITERS["gate"].wait()
         candles = http_json(
@@ -417,6 +429,9 @@ def bybit_instruments(category: str) -> list[dict[str, Any]]:
 
 
 def bybit_spot_listing_time(symbol: str) -> dt.datetime | None:
+    cached = cached_listing_time("bybit", "spot", symbol)
+    if cached:
+        return cached
     try:
         payload = http_json(
             "https://api.bybit.com/v5/market/kline",
@@ -566,7 +581,7 @@ def funding_gate(market: dict[str, Any], cutoff: dt.datetime) -> list[tuple[dt.d
     for item in payload:
         timestamp = from_seconds(item.get("t"))
         rate = number(item.get("r"))
-        if timestamp and rate is not None:
+        if timestamp and rate is not None and timestamp >= cutoff:
             result.append((timestamp, rate))
     return result
 
@@ -662,26 +677,11 @@ FUNDING_FETCHERS = {
 }
 
 
-def funding_rows_for_market(
+def build_funding_rows(
     market: dict[str, Any],
-    history_days: int,
-) -> tuple[list[dict[str, Any]], str]:
-    now = dt.datetime.now(UTC)
-    cutoff = now - dt.timedelta(days=history_days)
-    listing_text = market.get("listing_time_utc", "")
-    if listing_text:
-        try:
-            listing = dt.datetime.fromisoformat(listing_text).astimezone(UTC)
-            cutoff = max(cutoff, listing)
-        except ValueError:
-            pass
-    try:
-        records = FUNDING_FETCHERS[market["exchange"]](market, cutoff)
-        error = ""
-    except Exception as exc:
-        records = []
-        error = str(exc)
-
+    records: list[tuple[dt.datetime, float]],
+    error: str,
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for timestamp, rate in sorted(set(records), key=lambda item: item[0]):
         rows.append(
@@ -700,7 +700,7 @@ def funding_rows_for_market(
                 "error": "",
             }
         )
-    if not rows:
+    if not rows and error:
         rows.append(
             {
                 "exchange": market["exchange"], "symbol": market["symbol"],
@@ -709,10 +709,133 @@ def funding_rows_for_market(
                 "listing_time_beijing": market["listing_time_beijing"],
                 "funding_interval_hours": market["funding_interval_hours"],
                 "funding_time_utc": "", "funding_time_beijing": "", "funding_rate": "",
-                "funding_rate_pct": "", "error": error or "no funding records returned",
+                "funding_rate_pct": "", "error": error,
             }
         )
-    return rows, error
+    return rows
+
+
+def funding_rows_for_market(
+    market: dict[str, Any],
+    cutoff: dt.datetime,
+) -> tuple[list[dict[str, Any]], str]:
+    try:
+        records = FUNDING_FETCHERS[market["exchange"]](market, cutoff)
+        error = ""
+    except Exception as exc:
+        records = []
+        error = str(exc)
+
+    return (
+        build_funding_rows(
+            market,
+            records,
+            error,
+        ),
+        error,
+    )
+
+
+def parse_iso_time(value: Any) -> dt.datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def read_csv(path: Path) -> list[dict[str, str]]:
+    if not path.exists():
+        return []
+    with path.open(newline="", encoding="utf-8-sig") as file:
+        return list(csv.DictReader(file))
+
+
+def cache_listing_times(rows: list[dict[str, str]]) -> None:
+    for row in rows:
+        exchange = str(row.get("exchange", ""))
+        market = str(row.get("market", ""))
+        symbol = str(row.get("symbol", ""))
+        listing = parse_iso_time(row.get("listing_time_utc"))
+        if exchange and market and symbol and listing:
+            LISTING_TIME_CACHE[(exchange, market, symbol)] = listing
+
+
+def restore_cached_listing_times(markets: list[dict[str, Any]]) -> None:
+    for market in markets:
+        if market.get("listing_time_utc"):
+            continue
+        listing = cached_listing_time(
+            str(market.get("exchange", "")),
+            str(market.get("market", "")),
+            str(market.get("symbol", "")),
+        )
+        if listing:
+            market["listing_time_utc"] = iso(listing)
+            market["listing_time_beijing"] = iso(listing, BEIJING)
+
+
+def funding_cutoff(
+    market: dict[str, Any],
+    history_cutoff: dt.datetime,
+    latest_existing: dt.datetime | None,
+) -> dt.datetime:
+    cutoff = history_cutoff
+    listing = parse_iso_time(market.get("listing_time_utc"))
+    if listing:
+        cutoff = max(cutoff, listing)
+    if latest_existing:
+        cutoff = max(cutoff, latest_existing + dt.timedelta(milliseconds=1))
+    return cutoff
+
+
+def retained_funding_rows(
+    rows: list[dict[str, str]],
+    active_symbols: set[str],
+    history_cutoff: dt.datetime,
+) -> tuple[list[dict[str, str]], dict[str, dt.datetime]]:
+    retained: list[dict[str, str]] = []
+    latest_by_symbol: dict[str, dt.datetime] = {}
+    for row in rows:
+        symbol = str(row.get("symbol", ""))
+        timestamp = parse_iso_time(row.get("funding_time_utc"))
+        if symbol not in active_symbols or timestamp is None or timestamp < history_cutoff:
+            continue
+        retained.append(row)
+        latest_by_symbol[symbol] = max(
+            timestamp,
+            latest_by_symbol.get(symbol, timestamp),
+        )
+    return retained, latest_by_symbol
+
+
+def merge_funding_rows(
+    existing: list[dict[str, Any]],
+    new_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    records: dict[tuple[str, str], dict[str, Any]] = {}
+    diagnostics: dict[str, dict[str, Any]] = {}
+    for row in existing + new_rows:
+        symbol = str(row.get("symbol", ""))
+        funding_time = str(row.get("funding_time_utc", ""))
+        if funding_time:
+            records[(symbol, funding_time)] = row
+        elif row.get("error"):
+            diagnostics[symbol] = row
+    merged = list(records.values()) + list(diagnostics.values())
+    return sorted(
+        merged,
+        key=lambda row: (
+            str(row.get("underlying", "")),
+            str(row.get("symbol", "")),
+            str(row.get("funding_time_utc", "")),
+        ),
+    )
 
 
 def write_csv(path: Path, rows: list[dict[str, Any]], fields: list[str]) -> None:
@@ -726,26 +849,44 @@ def write_csv(path: Path, rows: list[dict[str, Any]], fields: list[str]) -> None
 
 def run_exchange(exchange: str, history_days: int, workers: int) -> dict[str, Any]:
     print(f"[{exchange}] discovering TradFi markets", flush=True)
+    markets_path = OUTPUT_DIR / f"{exchange}_tradifi_markets.csv"
+    cache_listing_times(read_csv(markets_path))
     markets = DISCOVERERS[exchange]()
+    restore_cached_listing_times(markets)
     markets.sort(key=lambda row: (row["market"], row["underlying"], row["symbol"]))
     futures = [row for row in markets if row["market"] == "perp"]
     spots = [row for row in markets if row["market"] == "spot"]
-    write_csv(OUTPUT_DIR / f"{exchange}_tradifi_markets.csv", markets, MARKET_FIELDS)
+    write_csv(markets_path, markets, MARKET_FIELDS)
     print(f"[{exchange}] spot={len(spots)} perp={len(futures)}; fetching {history_days}d funding", flush=True)
 
-    funding_rows: list[dict[str, Any]] = []
+    history_cutoff = dt.datetime.now(UTC) - dt.timedelta(days=history_days)
+    funding_path = OUTPUT_DIR / f"{exchange}_tradifi_funding.csv"
+    existing_rows, latest_by_symbol = retained_funding_rows(
+        read_csv(funding_path),
+        {str(market["symbol"]) for market in futures},
+        history_cutoff,
+    )
+    new_funding_rows: list[dict[str, Any]] = []
     errors: list[str] = []
     completed = 0
     with ThreadPoolExecutor(max_workers=workers) as executor:
         tasks = {
-            executor.submit(funding_rows_for_market, market, history_days): market
+            executor.submit(
+                funding_rows_for_market,
+                market,
+                funding_cutoff(
+                    market,
+                    history_cutoff,
+                    latest_by_symbol.get(str(market["symbol"])),
+                ),
+            ): market
             for market in futures
         }
         for future in as_completed(tasks):
             market = tasks[future]
             try:
                 rows, error = future.result()
-                funding_rows.extend(rows)
+                new_funding_rows.extend(rows)
                 if error:
                     errors.append(f"{market['symbol']}: {error}")
             except Exception as exc:
@@ -754,8 +895,8 @@ def run_exchange(exchange: str, history_days: int, workers: int) -> dict[str, An
             if completed % 25 == 0 or completed == len(futures):
                 print(f"[{exchange}] funding {completed}/{len(futures)} errors={len(errors)}", flush=True)
 
-    funding_rows.sort(key=lambda row: (row["underlying"], row["symbol"], row["funding_time_utc"]))
-    write_csv(OUTPUT_DIR / f"{exchange}_tradifi_funding.csv", funding_rows, FUNDING_FIELDS)
+    funding_rows = merge_funding_rows(existing_rows, new_funding_rows)
+    write_csv(funding_path, funding_rows, FUNDING_FIELDS)
     summary = {
         "exchange": exchange,
         "generated_at_utc": iso(dt.datetime.now(UTC)),
@@ -763,6 +904,10 @@ def run_exchange(exchange: str, history_days: int, workers: int) -> dict[str, An
         "spot_count": len(spots),
         "perp_count": len(futures),
         "funding_record_count": sum(1 for row in funding_rows if row["funding_time_utc"]),
+        "retained_funding_record_count": len(existing_rows),
+        "new_funding_record_count": sum(
+            1 for row in new_funding_rows if row.get("funding_time_utc")
+        ),
         "error_count": len(errors),
         "errors": errors,
     }
@@ -781,12 +926,32 @@ def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     selected = EXCHANGES if args.exchange == "all" else (args.exchange,)
     summaries = []
-    for exchange in selected:
+    if len(selected) == 1:
+        exchange = selected[0]
         try:
             summaries.append(run_exchange(exchange, args.history_days, args.workers))
         except Exception as exc:
             print(f"[{exchange}] FAILED: {exc}", flush=True)
             summaries.append({"exchange": exchange, "fatal_error": str(exc)})
+    else:
+        with ThreadPoolExecutor(max_workers=len(selected)) as executor:
+            tasks = {
+                executor.submit(
+                    run_exchange,
+                    exchange,
+                    args.history_days,
+                    args.workers,
+                ): exchange
+                for exchange in selected
+            }
+            for future in as_completed(tasks):
+                exchange = tasks[future]
+                try:
+                    summaries.append(future.result())
+                except Exception as exc:
+                    print(f"[{exchange}] FAILED: {exc}", flush=True)
+                    summaries.append({"exchange": exchange, "fatal_error": str(exc)})
+    summaries.sort(key=lambda item: str(item.get("exchange", "")))
     print(json.dumps(summaries, ensure_ascii=False, indent=2), flush=True)
 
 

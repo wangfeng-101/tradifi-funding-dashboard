@@ -4,12 +4,15 @@ import csv
 import datetime as dt
 import json
 import sys
+import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
 
 SPOT_EXCHANGE_INFO_URL = "https://api.binance.com/api/v3/exchangeInfo"
+SPOT_TICKER_PRICE_URL = "https://api.binance.com/api/v3/ticker/price"
 USDM_EXCHANGE_INFO_URL = "https://fapi.binance.com/fapi/v1/exchangeInfo"
 
 OUTPUT_DIR = Path(__file__).resolve().parent / "outputs"
@@ -19,7 +22,9 @@ SUMMARY_JSON = OUTPUT_DIR / "binance_tradifi_symbols.json"
 DEFAULT_LISTS_PY = OUTPUT_DIR / "binance_tradifi_default_symbols.py"
 
 
-def fetch_json(url: str) -> dict[str, Any]:
+def fetch_json(url: str, params: dict[str, Any] | None = None) -> Any:
+    if params:
+        url = f"{url}?{urllib.parse.urlencode(params)}"
     request = urllib.request.Request(
         url,
         headers={
@@ -29,6 +34,25 @@ def fetch_json(url: str) -> dict[str, Any]:
     )
     with urllib.request.urlopen(request, timeout=30) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def tradifi_spot_symbols(
+    ticker_rows: Any,
+    tradifi_bases: set[str],
+) -> list[str]:
+    if not isinstance(ticker_rows, list):
+        raise RuntimeError("unexpected Binance spot ticker response")
+    available = {
+        str(row.get("symbol", ""))
+        for row in ticker_rows
+        if isinstance(row, dict)
+    }
+    candidates = {
+        symbol
+        for base in tradifi_bases
+        for symbol in (f"{base}USDT", f"{base}BUSDT")
+    }
+    return sorted(available & candidates)
 
 
 def ms_to_datetime(value: Any) -> str:
@@ -151,11 +175,24 @@ def main() -> int:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     now = dt.datetime.now(dt.timezone.utc).astimezone().isoformat(timespec="seconds")
-    usdm_info = fetch_json(USDM_EXCHANGE_INFO_URL)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        usdm_future = executor.submit(fetch_json, USDM_EXCHANGE_INFO_URL)
+        spot_tickers_future = executor.submit(fetch_json, SPOT_TICKER_PRICE_URL)
+        usdm_info = usdm_future.result()
+        spot_tickers = spot_tickers_future.result()
+
     futures_rows = get_tradifi_futures(usdm_info)
     futures_bases = {row["base_asset"] for row in futures_rows}
+    spot_symbols = tradifi_spot_symbols(spot_tickers, futures_bases)
+    spot_info = (
+        fetch_json(
+            SPOT_EXCHANGE_INFO_URL,
+            {"symbols": json.dumps(spot_symbols, separators=(",", ":"))},
+        )
+        if spot_symbols
+        else {"symbols": []}
+    )
 
-    spot_info = fetch_json(SPOT_EXCHANGE_INFO_URL)
     spot_rows = get_tradifi_spot(spot_info, futures_bases)
 
     write_csv(FUTURES_CSV, futures_rows)
@@ -166,6 +203,7 @@ def main() -> int:
         "generated_at": now,
         "source": {
             "spot": SPOT_EXCHANGE_INFO_URL,
+            "spot_symbol_discovery": SPOT_TICKER_PRICE_URL,
             "usdm": USDM_EXCHANGE_INFO_URL,
         },
         "filters": {

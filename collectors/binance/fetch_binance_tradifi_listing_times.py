@@ -64,9 +64,11 @@ def read_spot_symbols(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(file))
 
 
-def exchange_info_by_symbol() -> dict[str, dict[str, Any]]:
-    info = fetch_json(SPOT_EXCHANGE_INFO_URL)
-    return {str(item.get("symbol", "")): item for item in info.get("symbols", [])}
+def read_existing_rows(path: Path) -> list[dict[str, str]]:
+    if not path.exists():
+        return []
+    with path.open("r", newline="", encoding="utf-8-sig") as file:
+        return list(csv.DictReader(file))
 
 
 def first_spot_kline(symbol: str) -> list[Any] | None:
@@ -84,53 +86,59 @@ def first_spot_kline(symbol: str) -> list[Any] | None:
     return None
 
 
-def build_rows(symbol_rows: list[dict[str, str]]) -> list[dict[str, Any]]:
-    exchange_info = exchange_info_by_symbol()
+def build_rows(
+    symbol_rows: list[dict[str, str]],
+    existing_rows: list[dict[str, str]] | None = None,
+) -> list[dict[str, Any]]:
+    existing_by_symbol = {
+        row.get("symbol", ""): row
+        for row in (existing_rows or [])
+        if row.get("symbol")
+    }
     rows: list[dict[str, Any]] = []
 
     for index, symbol_row in enumerate(symbol_rows, start=1):
         symbol = symbol_row["symbol"]
-        info = exchange_info.get(symbol, {})
+        existing = existing_by_symbol.get(symbol, {})
+        requested_kline = False
         row: dict[str, Any] = {
             "symbol": symbol,
-            "base_asset": symbol_row.get("base_asset", info.get("baseAsset", "")),
+            "base_asset": symbol_row.get("base_asset", ""),
             "underlying": symbol_row.get("underlying", ""),
-            "quote_asset": symbol_row.get("quote_asset", info.get("quoteAsset", "")),
-            "status": info.get("status", symbol_row.get("status", "")),
-            "is_spot_trading_allowed": info.get(
-                "isSpotTradingAllowed",
-                symbol_row.get("is_spot_trading_allowed", ""),
+            "quote_asset": symbol_row.get("quote_asset", ""),
+            "status": symbol_row.get("status", ""),
+            "is_spot_trading_allowed": symbol_row.get("is_spot_trading_allowed", ""),
+            "is_margin_trading_allowed": symbol_row.get("is_margin_trading_allowed", ""),
+            "spot_first_kline_time_utc": existing.get("spot_first_kline_time_utc", ""),
+            "spot_first_kline_time_beijing": existing.get(
+                "spot_first_kline_time_beijing", ""
             ),
-            "is_margin_trading_allowed": info.get(
-                "isMarginTradingAllowed",
-                symbol_row.get("is_margin_trading_allowed", ""),
-            ),
-            "spot_first_kline_time_utc": "",
-            "spot_first_kline_time_beijing": "",
-            "spot_first_open": "",
-            "spot_first_close": "",
+            "spot_first_open": existing.get("spot_first_open", ""),
+            "spot_first_close": existing.get("spot_first_close", ""),
             "margin_listing_time_utc": "",
             "margin_listing_time_beijing": "",
             "margin_time_source": "not_exposed_by_public_spot_exchangeInfo; current margin status only",
-            "note": "",
+            "note": existing.get("note", ""),
         }
 
-        try:
-            kline = first_spot_kline(symbol)
-            if kline:
-                row["spot_first_kline_time_utc"] = ms_to_utc(kline[0])
-                row["spot_first_kline_time_beijing"] = ms_to_beijing(kline[0])
-                row["spot_first_open"] = kline[1]
-                row["spot_first_close"] = kline[4]
-            else:
-                row["note"] = "no kline returned"
-        except Exception as exc:
-            row["note"] = f"kline_error: {exc}"
+        if not row["spot_first_kline_time_utc"]:
+            requested_kline = True
+            try:
+                kline = first_spot_kline(symbol)
+                if kline:
+                    row["spot_first_kline_time_utc"] = ms_to_utc(kline[0])
+                    row["spot_first_kline_time_beijing"] = ms_to_beijing(kline[0])
+                    row["spot_first_open"] = kline[1]
+                    row["spot_first_close"] = kline[4]
+                    row["note"] = ""
+                else:
+                    row["note"] = "no kline returned"
+            except Exception as exc:
+                row["note"] = f"kline_error: {exc}"
 
         rows.append(row)
 
-        # Keep the public API calls gentle.
-        if index < len(symbol_rows):
+        if requested_kline and index < len(symbol_rows):
             time.sleep(0.05)
 
     return rows
@@ -147,14 +155,15 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 def main() -> int:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     symbol_rows = read_spot_symbols(SPOT_SYMBOLS_CSV)
-    rows = build_rows(symbol_rows)
+    existing_rows = read_existing_rows(LISTING_TIMES_CSV)
+    rows = build_rows(symbol_rows, existing_rows)
 
     write_csv(LISTING_TIMES_CSV, rows)
 
     summary = {
         "generated_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
         "sources": {
-            "spot_exchange_info": SPOT_EXCHANGE_INFO_URL,
+            "spot_symbols": str(SPOT_SYMBOLS_CSV),
             "spot_klines": SPOT_KLINES_URL,
         },
         "spot_listing_time_method": "earliest 1m spot kline open time",
