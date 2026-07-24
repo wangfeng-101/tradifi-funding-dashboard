@@ -14,6 +14,12 @@ const state = {
   pageSize: 100,
 };
 
+const WINDOW_DAYS = {
+  "1d": 1,
+  "7d": 7,
+  "30d": 30,
+};
+
 const elements = {
   dataTime: document.querySelector("#data-time"),
   exchangeStatus: document.querySelector("#exchange-status"),
@@ -103,7 +109,7 @@ function currentRows() {
       const symbols = Object.values(opportunity.symbols || {}).join(" ").toUpperCase();
       if (query && !opportunity.underlying.includes(query) && !symbols.includes(query)) return false;
       if (annualizedSpread(windowData) < state.minSpread) return false;
-      if (state.fullOnly && !windowData.is_full_window) return false;
+      if (state.fullOnly && !isFullWindow(opportunity, windowData, state.window)) return false;
       if (state.route !== "all" && windowData.short_exchange !== state.route) return false;
       if (state.pair !== "all" && opportunity.id.split(":").slice(0, -1).join(":") !== state.pair) return false;
       return true;
@@ -123,6 +129,17 @@ function currentRows() {
 
 function annualizedSpread(windowData) {
   return Number(windowData.annualized_gross_diff_pct ?? windowData.gross_diff_pct ?? 0);
+}
+
+function isFullWindow(opportunity, windowData, window) {
+  if (!windowData?.is_full_window) return false;
+  const requiredDays = WINDOW_DAYS[window];
+  if (!requiredDays) return true;
+
+  const commonStart = new Date(opportunity.common_start_time).getTime();
+  const windowEnd = new Date(windowData.end_time).getTime();
+  if (!Number.isFinite(commonStart) || !Number.isFinite(windowEnd)) return false;
+  return windowEnd - commonStart >= requiredDays * 86_400_000;
 }
 
 function annualizedRates(windowData) {
@@ -181,7 +198,9 @@ function renderPairOptions() {
 function renderMetrics(rows) {
   const top = rows[0];
   const available = state.data.opportunities.filter((item) => item.strategy_type === state.strategy && item.windows[state.window]).length;
-  const fullCount = rows.filter((row) => row.windowData.is_full_window).length;
+  const fullCount = rows.filter((row) => (
+    isFullWindow(row.opportunity, row.windowData, state.window)
+  )).length;
   const topRoute = top
     ? `${legLabel(top.windowData.short_leg)} → ${legLabel(top.windowData.long_leg)}`
     : "--";
@@ -291,7 +310,7 @@ function openDetail(id) {
         <td>${rates}</td>
         <td><span class="receive-text">空 ${escapeHtml(legLabel(item.short_leg))}</span><br><span class="pay-text">多 ${escapeHtml(legLabel(item.long_leg))}</span></td>
         <td class="spread-value">${formatPct(annualizedSpread(item))}</td>
-        <td>${Number(item.elapsed_days || 0).toFixed(2)} 天 · ${item.is_full_window ? "完整" : "不足"}</td>
+        <td>${Number(item.elapsed_days || 0).toFixed(2)} 天 · ${isFullWindow(opportunity, item, window) ? "完整" : "不足"}</td>
       </tr>
     `;
   }).join("");

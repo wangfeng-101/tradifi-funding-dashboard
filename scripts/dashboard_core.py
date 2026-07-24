@@ -282,6 +282,15 @@ def history_is_complete(
     return records[0][0] <= window_start + allowance
 
 
+def requested_window_is_complete(
+    common_start: datetime,
+    requested_start: datetime,
+    delta: timedelta | None,
+) -> bool:
+    """A fixed window is complete only when both markets existed for all of it."""
+    return delta is None or common_start <= requested_start
+
+
 def annualize_rate(cumulative_rate_pct: float, start: datetime, end: datetime) -> float:
     elapsed_days = (end - start).total_seconds() / 86_400
     if elapsed_days <= 0:
@@ -319,7 +328,9 @@ def build_spot_perp_opportunity(
         windows[window] = {
             "start_time": iso_beijing(window_start),
             "end_time": iso_beijing(calculation_end),
-            "is_full_window": history_is_complete(
+            "is_full_window": requested_window_is_complete(
+                common_start, requested_start, delta
+            ) and history_is_complete(
                 future["records"], window_start, future.get("interval_hours") or 8
             ),
             "rates_pct": {spot_key: 0.0, perp_key: cumulative},
@@ -420,7 +431,9 @@ def build_cross_perp_opportunity(
         windows[window] = {
             "start_time": iso_beijing(window_start),
             "end_time": iso_beijing(calculation_end),
-            "is_full_window": history_is_complete(
+            "is_full_window": requested_window_is_complete(
+                common_start, requested_start, delta
+            ) and history_is_complete(
                 left["records"], window_start, left.get("interval_hours") or 8
             ) and history_is_complete(
                 right["records"], window_start, right.get("interval_hours") or 8
