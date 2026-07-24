@@ -4,14 +4,20 @@ import argparse
 import csv
 import datetime as dt
 import json
+import math
+import sys
 import threading
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.http_client import JsonHttpClient, JsonRequestError
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -22,6 +28,7 @@ BEIJING = dt.timezone(dt.timedelta(hours=8))
 TRADFI_CATEGORIES = {"stocks", "metals", "indices", "forex", "commodities"}
 EXCHANGES = ("okx", "gate", "bitget", "bybit", "phemex")
 LISTING_TIME_CACHE: dict[tuple[str, str, str], dt.datetime] = {}
+HTTP_CLIENT = JsonHttpClient(timeout=35)
 
 MARKET_FIELDS = [
     "exchange", "market", "symbol", "underlying", "raw_base", "quote", "status",
@@ -123,25 +130,16 @@ def http_json(
     method: str = "GET",
     body: Any = None,
 ) -> Any:
-    if params:
-        url = f"{url}?{urllib.parse.urlencode(params)}"
-    payload = None if body is None else json.dumps(body).encode("utf-8")
-    request = urllib.request.Request(
-        url,
-        data=payload,
-        method=method,
-        headers={
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        },
-    )
     last_error: Exception | None = None
     for attempt in range(3):
         try:
-            with urllib.request.urlopen(request, timeout=35) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            return HTTP_CLIENT.request_json(
+                url,
+                params,
+                method=method,
+                body=body,
+            )
+        except JsonRequestError as exc:
             last_error = exc
             if attempt < 2:
                 time.sleep(1.5 * (attempt + 1))
@@ -556,11 +554,49 @@ DISCOVERERS: dict[str, Callable[[], list[dict[str, Any]]]] = {
 }
 
 
+def funding_request_limit(
+    market: dict[str, Any],
+    cutoff: dt.datetime,
+    maximum: int,
+    *,
+    minimum: int = 3,
+    now: dt.datetime | None = None,
+) -> int:
+    current = now or dt.datetime.now(UTC)
+    interval_hours = number(market.get("funding_interval_hours")) or 8
+    elapsed_hours = max(0.0, (current - cutoff).total_seconds() / 3600)
+    expected_records = math.ceil(elapsed_hours / interval_hours)
+    return max(1, min(maximum, max(minimum, expected_records + 2)))
+
+
+def funding_is_due(
+    market: dict[str, Any],
+    latest_existing: dt.datetime | None,
+    *,
+    now: dt.datetime | None = None,
+) -> bool:
+    if latest_existing is None:
+        return True
+    interval_hours = number(market.get("funding_interval_hours"))
+    if interval_hours is None or interval_hours <= 0:
+        return True
+    current = now or dt.datetime.now(UTC)
+    return current >= latest_existing + dt.timedelta(hours=interval_hours)
+
+
 def funding_okx(market: dict[str, Any], cutoff: dt.datetime) -> list[tuple[dt.datetime, float]]:
     LIMITERS["okx"].wait()
     payload = http_json(
         "https://www.okx.com/api/v5/public/funding-rate-history",
-        {"instId": market["symbol"], "limit": 400},
+        {
+            "instId": market["symbol"],
+            "limit": funding_request_limit(
+                market,
+                cutoff,
+                400,
+                minimum=12,
+            ),
+        },
     )
     result = []
     for item in payload.get("data", []):
@@ -575,7 +611,11 @@ def funding_gate(market: dict[str, Any], cutoff: dt.datetime) -> list[tuple[dt.d
     LIMITERS["gate"].wait()
     payload = http_json(
         "https://api.gateio.ws/api/v4/futures/usdt/funding_rate",
-        {"contract": market["symbol"], "limit": 1000, "from": int(cutoff.timestamp())},
+        {
+            "contract": market["symbol"],
+            "limit": funding_request_limit(market, cutoff, 1000),
+            "from": int(cutoff.timestamp()),
+        },
     )
     result = []
     for item in payload:
@@ -588,11 +628,17 @@ def funding_gate(market: dict[str, Any], cutoff: dt.datetime) -> list[tuple[dt.d
 
 def funding_bitget(market: dict[str, Any], cutoff: dt.datetime) -> list[tuple[dt.datetime, float]]:
     result: list[tuple[dt.datetime, float]] = []
-    for page in range(1, 6):
+    limit = funding_request_limit(market, cutoff, 100)
+    for page in range(1, 11):
         LIMITERS["bitget"].wait()
         payload = http_json(
             "https://api.bitget.com/api/v3/market/history-fund-rate",
-            {"category": "USDT-FUTURES", "symbol": market["symbol"], "limit": 100, "cursor": page},
+            {
+                "category": "USDT-FUTURES",
+                "symbol": market["symbol"],
+                "limit": limit,
+                "cursor": page,
+            },
         )
         rows = payload.get("data", {}).get("resultList", [])
         if not rows:
@@ -605,19 +651,25 @@ def funding_bitget(market: dict[str, Any], cutoff: dt.datetime) -> list[tuple[dt
                 oldest = timestamp if oldest is None else min(oldest, timestamp)
             if timestamp and rate is not None and timestamp >= cutoff:
                 result.append((timestamp, rate))
-        if len(rows) < 100 or (oldest and oldest <= cutoff):
+        if len(rows) < limit or (oldest and oldest <= cutoff):
             break
     return result
 
 
 def funding_bybit(market: dict[str, Any], cutoff: dt.datetime) -> list[tuple[dt.datetime, float]]:
     result: list[tuple[dt.datetime, float]] = []
-    end_time: int | None = None
-    for _ in range(4):
+    start_time = int(cutoff.timestamp() * 1000)
+    end_time = int(dt.datetime.now(UTC).timestamp() * 1000)
+    limit = funding_request_limit(market, cutoff, 200)
+    for _ in range(10):
         LIMITERS["bybit"].wait()
-        params: dict[str, Any] = {"category": "linear", "symbol": market["symbol"], "limit": 200}
-        if end_time:
-            params["endTime"] = end_time
+        params: dict[str, Any] = {
+            "category": "linear",
+            "symbol": market["symbol"],
+            "startTime": start_time,
+            "endTime": end_time,
+            "limit": limit,
+        }
         payload = http_json("https://api.bybit.com/v5/market/funding/history", params)
         rows = payload.get("result", {}).get("list", [])
         if not rows:
@@ -631,7 +683,7 @@ def funding_bybit(market: dict[str, Any], cutoff: dt.datetime) -> list[tuple[dt.
             if timestamp and rate is not None and timestamp >= cutoff:
                 result.append((timestamp, rate))
         oldest = min(times) if times else None
-        if len(rows) < 200 or not oldest or oldest <= cutoff:
+        if len(rows) < limit or not oldest or oldest <= cutoff:
             break
         end_time = int(oldest.timestamp() * 1000) - 1
     return result
@@ -641,11 +693,17 @@ def funding_phemex(market: dict[str, Any], cutoff: dt.datetime) -> list[tuple[dt
     result: list[tuple[dt.datetime, float]] = []
     start = int(cutoff.timestamp() * 1000)
     end = int(dt.datetime.now(UTC).timestamp() * 1000)
-    for _ in range(8):
+    limit = funding_request_limit(market, cutoff, 100)
+    for _ in range(10):
         LIMITERS["phemex"].wait()
         payload = http_json(
             "https://api.phemex.com/api-data/public/data/funding-rate-history",
-            {"symbol": f".{market['symbol']}FR8H", "start": start, "end": end, "limit": 100},
+            {
+                "symbol": f".{market['symbol']}FR8H",
+                "start": start,
+                "end": end,
+                "limit": limit,
+            },
         )
         rows = payload.get("data", {}).get("rows", [])
         if not rows:
@@ -659,7 +717,7 @@ def funding_phemex(market: dict[str, Any], cutoff: dt.datetime) -> list[tuple[dt
             if timestamp and rate is not None and timestamp >= cutoff:
                 result.append((timestamp, rate))
         newest = max(times) if times else None
-        if len(rows) < 100 or not newest or int(newest.timestamp() * 1000) >= end:
+        if len(rows) < limit or not newest or int(newest.timestamp() * 1000) >= end:
             break
         next_start = int(newest.timestamp() * 1000) + 1
         if next_start <= start:
@@ -866,6 +924,20 @@ def run_exchange(exchange: str, history_days: int, workers: int) -> dict[str, An
         {str(market["symbol"]) for market in futures},
         history_cutoff,
     )
+    query_markets = [
+        market
+        for market in futures
+        if funding_is_due(
+            market,
+            latest_by_symbol.get(str(market["symbol"])),
+        )
+    ]
+    skipped_not_due = len(futures) - len(query_markets)
+    print(
+        f"[{exchange}] funding due={len(query_markets)} "
+        f"skipped_not_due={skipped_not_due}",
+        flush=True,
+    )
     new_funding_rows: list[dict[str, Any]] = []
     errors: list[str] = []
     completed = 0
@@ -880,7 +952,7 @@ def run_exchange(exchange: str, history_days: int, workers: int) -> dict[str, An
                     latest_by_symbol.get(str(market["symbol"])),
                 ),
             ): market
-            for market in futures
+            for market in query_markets
         }
         for future in as_completed(tasks):
             market = tasks[future]
@@ -892,8 +964,12 @@ def run_exchange(exchange: str, history_days: int, workers: int) -> dict[str, An
             except Exception as exc:
                 errors.append(f"{market['symbol']}: {exc}")
             completed += 1
-            if completed % 25 == 0 or completed == len(futures):
-                print(f"[{exchange}] funding {completed}/{len(futures)} errors={len(errors)}", flush=True)
+            if completed % 25 == 0 or completed == len(query_markets):
+                print(
+                    f"[{exchange}] funding {completed}/{len(query_markets)} "
+                    f"errors={len(errors)}",
+                    flush=True,
+                )
 
     funding_rows = merge_funding_rows(existing_rows, new_funding_rows)
     write_csv(funding_path, funding_rows, FUNDING_FIELDS)
@@ -903,6 +979,8 @@ def run_exchange(exchange: str, history_days: int, workers: int) -> dict[str, An
         "history_days_requested": history_days,
         "spot_count": len(spots),
         "perp_count": len(futures),
+        "queried_perp_count": len(query_markets),
+        "skipped_not_due_count": skipped_not_due,
         "funding_record_count": sum(1 for row in funding_rows if row["funding_time_utc"]),
         "retained_funding_record_count": len(existing_rows),
         "new_funding_record_count": sum(

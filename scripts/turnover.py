@@ -1,19 +1,26 @@
 from __future__ import annotations
 
+import csv
 import json
 import time
-import urllib.error
-import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 
-BASE_DIR = Path(__file__).resolve().parent
-CACHE_PATH = BASE_DIR / "turnover_24h.json"
+try:
+    from scripts.http_client import JsonHttpClient, JsonRequestError
+except ModuleNotFoundError:
+    from http_client import JsonHttpClient, JsonRequestError
 
-SOURCES = {
+
+BASE_DIR = Path(__file__).resolve().parent
+ROOT_DIR = BASE_DIR.parent
+CACHE_PATH = BASE_DIR / "turnover_24h.json"
+HTTP_CLIENT = JsonHttpClient(timeout=30)
+
+REMOTE_SOURCES = {
     "binance_spot": {
         "url": "https://api.binance.com/api/v3/ticker/24hr",
         "kind": "binance",
@@ -22,47 +29,34 @@ SOURCES = {
         "url": "https://fapi.binance.com/fapi/v1/ticker/24hr",
         "kind": "binance",
     },
-    "kucoin_perp": {
-        "url": "https://api-futures.kucoin.com/api/v1/contracts/active",
-        "kind": "kucoin",
-    },
-    "okx_perp": {
-        "url": "https://www.okx.com/api/v5/market/tickers?instType=SWAP",
-        "kind": "okx",
-    },
-    "okx_spot": {
-        "url": "https://www.okx.com/api/v5/market/tickers?instType=SPOT",
-        "kind": "okx_spot",
-    },
-    "gate_spot": {
-        "url": "https://api.gateio.ws/api/v4/spot/tickers",
-        "kind": "gate_spot",
-    },
-    "gate_perp": {
-        "url": "https://api.gateio.ws/api/v4/futures/usdt/tickers",
-        "kind": "gate_perp",
-    },
-    "bitget_spot": {
-        "url": "https://api.bitget.com/api/v3/market/tickers?category=SPOT",
-        "kind": "bitget",
-    },
-    "bitget_perp": {
-        "url": "https://api.bitget.com/api/v3/market/tickers?category=USDT-FUTURES",
-        "kind": "bitget",
-    },
-    "bybit_perp": {
-        "url": "https://api.bybit.com/v5/market/tickers?category=linear",
-        "kind": "bybit",
-    },
-    "bybit_spot": {
-        "url": "https://api.bybit.com/v5/market/tickers?category=spot",
-        "kind": "bybit",
-    },
-    "phemex_perp": {
-        "url": "https://api.phemex.com/md/v2/ticker/24hr/all",
-        "kind": "phemex",
-    },
 }
+
+MULTI_OUTPUT_DIR = ROOT_DIR / "collectors" / "multi_exchange" / "outputs"
+LOCAL_MARKET_SOURCES = {
+    "okx_perp": (MULTI_OUTPUT_DIR / "okx_tradifi_markets.csv", "perp"),
+    "okx_spot": (MULTI_OUTPUT_DIR / "okx_tradifi_markets.csv", "spot"),
+    "gate_perp": (MULTI_OUTPUT_DIR / "gate_tradifi_markets.csv", "perp"),
+    "gate_spot": (MULTI_OUTPUT_DIR / "gate_tradifi_markets.csv", "spot"),
+    "bitget_perp": (MULTI_OUTPUT_DIR / "bitget_tradifi_markets.csv", "perp"),
+    "bitget_spot": (MULTI_OUTPUT_DIR / "bitget_tradifi_markets.csv", "spot"),
+    "bybit_perp": (MULTI_OUTPUT_DIR / "bybit_tradifi_markets.csv", "perp"),
+    "bybit_spot": (MULTI_OUTPUT_DIR / "bybit_tradifi_markets.csv", "spot"),
+    "phemex_perp": (MULTI_OUTPUT_DIR / "phemex_tradifi_markets.csv", "perp"),
+}
+KUCOIN_LATEST_PATH = (
+    ROOT_DIR
+    / "collectors"
+    / "kucoin"
+    / "outputs"
+    / "kucoin_tradifi_funding_8h_latest.csv"
+)
+BINANCE_SPOT_SYMBOLS_PATH = (
+    ROOT_DIR
+    / "collectors"
+    / "binance"
+    / "outputs"
+    / "binance_tradifi_spot_symbols.csv"
+)
 
 
 def number(value: Any) -> float | None:
@@ -72,17 +66,12 @@ def number(value: Any) -> float | None:
         return None
 
 
-def fetch_json(url: str) -> Any:
-    request = urllib.request.Request(
-        url,
-        headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
-    )
+def fetch_json(url: str, params: dict[str, Any] | None = None) -> Any:
     last_error: Exception | None = None
     for attempt in range(3):
         try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            return HTTP_CLIENT.request_json(url, params)
+        except JsonRequestError as exc:
             last_error = exc
             if attempt < 2:
                 time.sleep(2**attempt)
@@ -165,13 +154,88 @@ def normalize(source: dict[str, str], payload: Any) -> dict[str, float]:
     raise ValueError(f"unknown ticker source: {kind}")
 
 
-def refresh_turnover_cache() -> dict[str, Any]:
+def read_csv(path: Path) -> list[dict[str, str]]:
+    if not path.exists():
+        raise FileNotFoundError(path)
+    with path.open(newline="", encoding="utf-8-sig") as file:
+        return list(csv.DictReader(file))
+
+
+def normalize_csv_turnover(
+    rows: list[dict[str, str]],
+    *,
+    market: str | None = None,
+) -> dict[str, float]:
+    result: dict[str, float] = {}
+    for row in rows:
+        if market is not None and row.get("market") != market:
+            continue
+        symbol = str(row.get("symbol", ""))
+        value = number(row.get("turnover_24h_usdt"))
+        if symbol and value is not None:
+            result[symbol] = value
+    return result
+
+
+def load_local_turnover() -> tuple[dict[str, dict[str, float]], list[str]]:
     venues: dict[str, dict[str, float]] = {}
     errors: list[str] = []
-    with ThreadPoolExecutor(max_workers=len(SOURCES)) as executor:
+    row_cache: dict[Path, list[dict[str, str]]] = {}
+
+    for venue, (path, market) in LOCAL_MARKET_SOURCES.items():
+        try:
+            if path not in row_cache:
+                row_cache[path] = read_csv(path)
+            rows = row_cache[path]
+            values = normalize_csv_turnover(rows, market=market)
+            if not values:
+                raise ValueError("no turnover records")
+            venues[venue] = values
+        except (OSError, ValueError) as exc:
+            errors.append(f"{venue}: local turnover: {exc}")
+
+    try:
+        values = normalize_csv_turnover(read_csv(KUCOIN_LATEST_PATH))
+        if not values:
+            raise ValueError("no turnover records")
+        venues["kucoin_perp"] = values
+    except (OSError, ValueError) as exc:
+        errors.append(f"kucoin_perp: local turnover: {exc}")
+
+    return venues, errors
+
+
+def binance_spot_params() -> dict[str, str]:
+    symbols = [
+        str(row.get("symbol", ""))
+        for row in read_csv(BINANCE_SPOT_SYMBOLS_PATH)
+        if row.get("symbol")
+    ]
+    if not symbols:
+        raise ValueError("no Binance spot symbols")
+    return {"symbols": json.dumps(symbols, separators=(",", ":"))}
+
+
+def refresh_turnover_cache() -> dict[str, Any]:
+    previous = load_turnover_cache()
+    previous_venues = previous.get("venues", {})
+    venues, errors = load_local_turnover()
+    remote_params: dict[str, dict[str, str] | None] = {
+        venue: None for venue in REMOTE_SOURCES
+    }
+    try:
+        remote_params["binance_spot"] = binance_spot_params()
+    except (OSError, ValueError) as exc:
+        errors.append(f"binance_spot: symbol filter: {exc}")
+
+    with ThreadPoolExecutor(max_workers=len(REMOTE_SOURCES)) as executor:
         futures = {
-            executor.submit(fetch_json, source["url"]): (venue, source)
-            for venue, source in SOURCES.items()
+            executor.submit(
+                fetch_json,
+                source["url"],
+                remote_params[venue],
+            ): (venue, source)
+            for venue, source in REMOTE_SOURCES.items()
         }
         for future in as_completed(futures):
             venue, source = futures[future]
@@ -179,6 +243,16 @@ def refresh_turnover_cache() -> dict[str, Any]:
                 venues[venue] = normalize(source, future.result())
             except Exception as exc:  # Individual exchanges must not block the others.
                 errors.append(f"{venue}: {exc}")
+                previous_values = previous_venues.get(venue)
+                if isinstance(previous_values, dict) and previous_values:
+                    venues[venue] = previous_values
+
+    for venue in LOCAL_MARKET_SOURCES.keys() | {"kucoin_perp"}:
+        if venue in venues:
+            continue
+        previous_values = previous_venues.get(venue)
+        if isinstance(previous_values, dict) and previous_values:
+            venues[venue] = previous_values
 
     payload = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),

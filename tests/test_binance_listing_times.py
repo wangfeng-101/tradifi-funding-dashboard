@@ -1,6 +1,9 @@
 import unittest
 from unittest.mock import patch
 
+from collectors.binance.fetch_binance_tradifi_funding_8h import (
+    incremental_page_limit,
+)
 from collectors.binance.fetch_binance_tradifi_listing_times import build_rows
 from collectors.binance.fetch_binance_tradifi_symbols import tradifi_spot_symbols
 
@@ -53,6 +56,28 @@ class BinanceSpotSymbolDiscoveryTests(unittest.TestCase):
         result = tradifi_spot_symbols(rows, {"AAPL", "NVDA"})
 
         self.assertEqual(result, ["AAPLUSDT", "NVDABUSDT"])
+
+
+class BinanceFundingIncrementalTests(unittest.TestCase):
+    def test_uses_small_per_symbol_page_for_incremental_window(self):
+        eight_hours_ms = 8 * 3_600_000
+
+        self.assertEqual(
+            incremental_page_limit(
+                1_000_001,
+                1_000_000 + eight_hours_ms,
+                8,
+            ),
+            3,
+        )
+        self.assertEqual(
+            incremental_page_limit(
+                1_000_001,
+                1_000_000 + eight_hours_ms,
+                1,
+            ),
+            10,
+        )
 
 
 if __name__ == "__main__":

@@ -6,12 +6,17 @@ import datetime as dt
 import json
 import sys
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.funding_schedule import settlement_is_due
+from scripts.http_client import JsonHttpClient, JsonRequestError
 
 
 BASE_URL = "https://api-futures.kucoin.com"
@@ -65,6 +70,7 @@ LATEST_FIELDS = [
     "funding_rate",
     "funding_rate_pct",
     "current_mark_price",
+    "turnover_24h_usdt",
     "records_total",
     "error",
 ]
@@ -84,38 +90,31 @@ NORMALIZED_8H_FIELDS = [
     "first_settlement_time_utc",
     "last_settlement_time_utc",
 ]
+HTTP_CLIENT = JsonHttpClient(timeout=REQUEST_TIMEOUT_SECONDS)
 
 
 def fetch_json(url: str, params: dict[str, Any] | None = None) -> Any:
-    full_url = url
-    if params:
-        full_url = f"{url}?{urllib.parse.urlencode(params)}"
-
     for attempt in range(1, MAX_RETRIES + 1):
-        request = urllib.request.Request(
-            full_url,
-            headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
-        )
         try:
-            with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
-                payload = json.loads(response.read().decode("utf-8"))
+            payload = HTTP_CLIENT.request_json(url, params)
             if payload.get("code") == "200000":
                 return payload
             code = str(payload.get("code", ""))
             if code not in {"429000", "200002"} or attempt == MAX_RETRIES:
                 raise RuntimeError(f"KuCoin API error from {url}: {payload}")
             delay = 2 ** (attempt - 1)
-        except urllib.error.HTTPError as exc:
-            retryable = exc.code in {429, 500, 502, 503, 504}
+        except JsonRequestError as exc:
+            retryable = exc.status is None or exc.status in {
+                429,
+                500,
+                502,
+                503,
+                504,
+            }
             if not retryable or attempt == MAX_RETRIES:
-                body = exc.read().decode("utf-8", errors="replace")
-                raise RuntimeError(f"HTTP {exc.code} from {url}: {body[:300]}") from exc
-            retry_after = exc.headers.get("Retry-After")
+                raise RuntimeError(str(exc)) from exc
+            retry_after = exc.headers.get("retry-after")
             delay = float(retry_after) if retry_after else 2 ** (attempt - 1)
-        except (urllib.error.URLError, TimeoutError) as exc:
-            if attempt == MAX_RETRIES:
-                raise RuntimeError(f"request failed for {url}: {exc}") from exc
-            delay = 2 ** (attempt - 1)
         time.sleep(delay)
 
     raise RuntimeError(f"request failed for {url}")
@@ -387,6 +386,7 @@ def build_latest_rows(
                 "funding_rate": latest.get("funding_rate", ""),
                 "funding_rate_pct": latest.get("funding_rate_pct", ""),
                 "current_mark_price": contract.get("markPrice", ""),
+                "turnover_24h_usdt": contract.get("turnoverOf24h", ""),
                 "records_total": len(records),
                 "error": errors.get(symbol, ""),
             }
@@ -445,6 +445,7 @@ def main() -> int:
 
     new_rows: list[dict[str, Any]] = []
     errors: dict[str, str] = {}
+    skipped_not_due = 0
     print(f"active_tradifi_contracts={len(contracts)}")
     for index, contract in enumerate(contracts, start=1):
         symbol = str(contract.get("symbol", ""))
@@ -454,6 +455,16 @@ def main() -> int:
             start_ms = max(start_ms, last_time_by_symbol[symbol] + 1)
 
         interval_hours, interval_source = configured_interval(contract)
+        latest_ms = last_time_by_symbol.get(symbol)
+        due = (
+            args.full_refresh
+            or latest_ms is None
+            or settlement_is_due(latest_ms, interval_hours, end_ms)
+        )
+        if not due:
+            skipped_not_due += 1
+            print(f"[{index:03d}/{len(contracts):03d}] {symbol}: skipped_not_due")
+            continue
         try:
             records = fetch_funding_history(symbol, start_ms, end_ms) if start_ms <= end_ms else []
             for record in records:
@@ -492,6 +503,7 @@ def main() -> int:
         "history_record_count": len(history),
         "normalized_8h_record_count": len(normalized_8h),
         "new_record_count": len(new_rows),
+        "skipped_not_due_count": skipped_not_due,
         "error_count": len(errors),
         "errors": errors,
         "latest": latest,
@@ -501,6 +513,7 @@ def main() -> int:
     print(f"history_record_count={len(history)}")
     print(f"normalized_8h_record_count={len(normalized_8h)}")
     print(f"new_record_count={len(new_rows)}")
+    print(f"skipped_not_due_count={skipped_not_due}")
     print(f"error_count={len(errors)}")
     print(f"wrote {HISTORY_CSV.name}")
     print(f"wrote {NORMALIZED_8H_CSV.name}")

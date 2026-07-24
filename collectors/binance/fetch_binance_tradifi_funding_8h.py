@@ -4,14 +4,22 @@ import argparse
 import csv
 import datetime as dt
 import json
+import math
 import sys
+import threading
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.funding_schedule import settlement_is_due
+from scripts.http_client import JsonHttpClient, JsonRequestError
 
 
 BASE_URL = "https://fapi.binance.com"
@@ -30,11 +38,14 @@ UTC = dt.timezone.utc
 BEIJING = dt.timezone(dt.timedelta(hours=8))
 REQUEST_TIMEOUT_SECONDS = 30
 MAX_RETRIES = 4
-MIN_REQUEST_INTERVAL_SECONDS = 0.75
+MIN_REQUEST_INTERVAL_SECONDS = 0.12
+INCREMENTAL_WORKERS = 8
 PAGE_LIMIT = 1000
 DEFAULT_FUNDING_INTERVAL_HOURS = 8
 INTERVAL_TOLERANCE_MINUTES = 5
 LAST_REQUEST_AT = 0.0
+REQUEST_LOCK = threading.Lock()
+HTTP_CLIENT = JsonHttpClient(timeout=REQUEST_TIMEOUT_SECONDS)
 
 HISTORY_FIELDS = [
     "symbol",
@@ -93,38 +104,33 @@ NORMALIZED_8H_FIELDS = [
 def fetch_json(url: str, params: dict[str, Any] | None = None) -> Any:
     global LAST_REQUEST_AT
 
-    full_url = url
-    if params:
-        full_url = f"{url}?{urllib.parse.urlencode(params)}"
-
     for attempt in range(1, MAX_RETRIES + 1):
-        elapsed = time.monotonic() - LAST_REQUEST_AT
-        if elapsed < MIN_REQUEST_INTERVAL_SECONDS:
-            time.sleep(MIN_REQUEST_INTERVAL_SECONDS - elapsed)
-        request = urllib.request.Request(
-            full_url,
-            headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
-        )
-        try:
+        with REQUEST_LOCK:
+            elapsed = time.monotonic() - LAST_REQUEST_AT
+            if elapsed < MIN_REQUEST_INTERVAL_SECONDS:
+                time.sleep(MIN_REQUEST_INTERVAL_SECONDS - elapsed)
             LAST_REQUEST_AT = time.monotonic()
-            with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            retryable = exc.code in {403, 418, 429, 500, 502, 503, 504}
+        try:
+            return HTTP_CLIENT.request_json(url, params)
+        except JsonRequestError as exc:
+            retryable = exc.status is None or exc.status in {
+                403,
+                418,
+                429,
+                500,
+                502,
+                503,
+                504,
+            }
             if not retryable or attempt == MAX_RETRIES:
-                body = exc.read().decode("utf-8", errors="replace")
-                raise RuntimeError(f"HTTP {exc.code} from {url}: {body[:300]}") from exc
-            retry_after = exc.headers.get("Retry-After")
+                raise RuntimeError(str(exc)) from exc
+            retry_after = exc.headers.get("retry-after")
             if retry_after:
                 delay = float(retry_after)
-            elif exc.code == 403:
+            elif exc.status == 403:
                 delay = 15 * (2 ** (attempt - 1))
             else:
                 delay = 2 ** (attempt - 1)
-        except (urllib.error.URLError, TimeoutError) as exc:
-            if attempt == MAX_RETRIES:
-                raise RuntimeError(f"request failed for {url}: {exc}") from exc
-            delay = 2 ** (attempt - 1)
         time.sleep(delay)
 
     raise RuntimeError(f"request failed for {url}")
@@ -190,6 +196,8 @@ def fetch_funding_history(
     symbol: str | None,
     start_ms: int,
     end_ms: int,
+    *,
+    page_limit: int = PAGE_LIMIT,
 ) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     cursor = start_ms
@@ -197,7 +205,7 @@ def fetch_funding_history(
         params: dict[str, Any] = {
             "startTime": cursor,
             "endTime": end_ms,
-            "limit": PAGE_LIMIT,
+            "limit": page_limit,
         }
         if symbol:
             params["symbol"] = symbol
@@ -210,10 +218,21 @@ def fetch_funding_history(
         if next_cursor <= cursor:
             break
         cursor = next_cursor
-        if len(batch) < PAGE_LIMIT:
+        if len(batch) < page_limit:
             break
         time.sleep(0.05)
     return records
+
+
+def incremental_page_limit(
+    start_ms: int,
+    end_ms: int,
+    interval_hours: int,
+) -> int:
+    elapsed_ms = max(0, end_ms - start_ms + 1)
+    interval_ms = max(1, interval_hours * 3_600_000)
+    expected_records = math.ceil(elapsed_ms / interval_ms)
+    return max(3, min(PAGE_LIMIT, expected_records + 2))
 
 
 def build_history_row(
@@ -458,48 +477,80 @@ def main() -> int:
     incremental_symbols = [
         symbol
         for symbol in contract_by_symbol
-        if symbol in last_time_by_symbol and start_by_symbol[symbol] <= end_ms
-    ]
-    if incremental_symbols:
-        bulk_start_ms = min(start_by_symbol[symbol] for symbol in incremental_symbols)
-        try:
-            bulk_records = fetch_funding_history(None, bulk_start_ms, end_ms)
-            incremental_set = set(incremental_symbols)
-            for record in bulk_records:
-                symbol = str(record.get("symbol", ""))
-                funding_ms = int(record.get("fundingTime") or 0)
-                if symbol in incremental_set and funding_ms >= start_by_symbol[symbol]:
-                    records_by_symbol[symbol].append(record)
-            print(
-                f"bulk_incremental_records={len(bulk_records)} "
-                f"tradifi_records={sum(len(records_by_symbol[s]) for s in incremental_symbols)}"
+        if (
+            symbol in last_time_by_symbol
+            and start_by_symbol[symbol] <= end_ms
+            and settlement_is_due(
+                last_time_by_symbol[symbol],
+                int(
+                    intervals.get(symbol, {}).get("fundingIntervalHours")
+                    or DEFAULT_FUNDING_INTERVAL_HOURS
+                ),
+                end_ms,
             )
-        except Exception as exc:
-            message = f"bulk incremental request failed: {exc}"
-            for symbol in incremental_symbols:
-                errors[symbol] = message
-            print(message, file=sys.stderr)
-
+        )
+    ]
+    skipped_not_due = sum(
+        1
+        for symbol in contract_by_symbol
+        if symbol in last_time_by_symbol and symbol not in incremental_symbols
+    )
+    print(
+        f"incremental_due={len(incremental_symbols)} "
+        f"skipped_not_due={skipped_not_due}"
+    )
     initial_symbols = [
         symbol
         for symbol in contract_by_symbol
         if symbol not in last_time_by_symbol and start_by_symbol[symbol] <= end_ms
     ]
-    for index, symbol in enumerate(initial_symbols, start=1):
-        try:
-            records_by_symbol[symbol] = fetch_funding_history(
-                symbol,
+    initial_set = set(initial_symbols)
+    query_symbols = incremental_symbols + initial_symbols
+
+    def query_symbol(symbol: str) -> list[dict[str, Any]]:
+        info = intervals.get(symbol, {})
+        interval_hours = int(
+            info.get("fundingIntervalHours") or DEFAULT_FUNDING_INTERVAL_HOURS
+        )
+        page_limit = (
+            PAGE_LIMIT
+            if symbol in initial_set
+            else incremental_page_limit(
                 start_by_symbol[symbol],
                 end_ms,
+                interval_hours,
             )
-            print(f"[initial {index:03d}/{len(initial_symbols):03d}] {symbol}: records={len(records_by_symbol[symbol])}")
-        except Exception as exc:
-            errors[symbol] = str(exc)
-            print(
-                f"[initial {index:03d}/{len(initial_symbols):03d}] {symbol}: error={exc}",
-                file=sys.stderr,
-            )
-        time.sleep(0.03)
+        )
+        return fetch_funding_history(
+            symbol,
+            start_by_symbol[symbol],
+            end_ms,
+            page_limit=page_limit,
+        )
+
+    completed = 0
+    with ThreadPoolExecutor(max_workers=INCREMENTAL_WORKERS) as executor:
+        futures = {
+            executor.submit(query_symbol, symbol): symbol
+            for symbol in query_symbols
+        }
+        for future in as_completed(futures):
+            symbol = futures[future]
+            try:
+                records_by_symbol[symbol] = future.result()
+            except Exception as exc:
+                errors[symbol] = str(exc)
+                print(f"{symbol}: error={exc}", file=sys.stderr)
+            completed += 1
+            if completed % 25 == 0 or completed == len(query_symbols):
+                new_records = sum(
+                    len(records_by_symbol[value])
+                    for value in query_symbols
+                )
+                print(
+                    f"funding {completed}/{len(query_symbols)} "
+                    f"new_records={new_records} errors={len(errors)}"
+                )
 
     new_rows: list[dict[str, Any]] = []
     for symbol, contract in contract_by_symbol.items():
@@ -532,7 +583,9 @@ def main() -> int:
         "active_contract_count": len(contracts),
         "history_record_count": len(history),
         "normalized_8h_record_count": len(normalized_8h),
+        "queried_contract_count": len(query_symbols),
         "new_record_count": len(new_rows),
+        "skipped_not_due_count": skipped_not_due,
         "error_count": len(errors),
         "errors": errors,
         "latest": latest,
@@ -541,7 +594,9 @@ def main() -> int:
 
     print(f"history_record_count={len(history)}")
     print(f"normalized_8h_record_count={len(normalized_8h)}")
+    print(f"queried_contract_count={len(query_symbols)}")
     print(f"new_record_count={len(new_rows)}")
+    print(f"skipped_not_due_count={skipped_not_due}")
     print(f"error_count={len(errors)}")
     print(f"wrote {HISTORY_CSV.name}")
     print(f"wrote {LATEST_CSV.name}")

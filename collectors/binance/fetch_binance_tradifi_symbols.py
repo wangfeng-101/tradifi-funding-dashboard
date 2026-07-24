@@ -4,11 +4,16 @@ import csv
 import datetime as dt
 import json
 import sys
-import urllib.parse
-import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.http_client import JsonHttpClient
 
 
 SPOT_EXCHANGE_INFO_URL = "https://api.binance.com/api/v3/exchangeInfo"
@@ -20,20 +25,11 @@ SPOT_CSV = OUTPUT_DIR / "binance_tradifi_spot_symbols.csv"
 FUTURES_CSV = OUTPUT_DIR / "binance_tradifi_futures_symbols.csv"
 SUMMARY_JSON = OUTPUT_DIR / "binance_tradifi_symbols.json"
 DEFAULT_LISTS_PY = OUTPUT_DIR / "binance_tradifi_default_symbols.py"
+HTTP_CLIENT = JsonHttpClient(timeout=30)
 
 
 def fetch_json(url: str, params: dict[str, Any] | None = None) -> Any:
-    if params:
-        url = f"{url}?{urllib.parse.urlencode(params)}"
-    request = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json",
-        },
-    )
-    with urllib.request.urlopen(request, timeout=30) as response:
-        return json.loads(response.read().decode("utf-8"))
+    return HTTP_CLIENT.request_json(url, params)
 
 
 def tradifi_spot_symbols(

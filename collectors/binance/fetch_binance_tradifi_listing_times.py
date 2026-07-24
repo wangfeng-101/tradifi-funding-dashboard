@@ -5,10 +5,15 @@ import datetime as dt
 import json
 import sys
 import time
-import urllib.parse
-import urllib.request
 from pathlib import Path
 from typing import Any
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.http_client import JsonHttpClient
 
 
 SPOT_EXCHANGE_INFO_URL = "https://api.binance.com/api/v3/exchangeInfo"
@@ -19,21 +24,11 @@ OUTPUT_DIR = BASE_DIR / "outputs"
 SPOT_SYMBOLS_CSV = OUTPUT_DIR / "binance_tradifi_spot_symbols.csv"
 LISTING_TIMES_CSV = OUTPUT_DIR / "binance_tradifi_spot_margin_listing_times.csv"
 LISTING_TIMES_JSON = OUTPUT_DIR / "binance_tradifi_spot_margin_listing_times.json"
+HTTP_CLIENT = JsonHttpClient(timeout=30)
 
 
 def fetch_json(url: str, params: dict[str, Any] | None = None) -> Any:
-    full_url = url
-    if params:
-        full_url = f"{url}?{urllib.parse.urlencode(params)}"
-    request = urllib.request.Request(
-        full_url,
-        headers={
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json",
-        },
-    )
-    with urllib.request.urlopen(request, timeout=30) as response:
-        return json.loads(response.read().decode("utf-8"))
+    return HTTP_CLIENT.request_json(url, params)
 
 
 def ms_to_utc(value: Any) -> str:

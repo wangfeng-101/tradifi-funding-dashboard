@@ -6,8 +6,11 @@ from collectors.multi_exchange.fetch_tradifi_data import (
     UTC,
     discover_bybit,
     discover_okx,
+    funding_bybit,
     funding_cutoff,
     funding_gate,
+    funding_is_due,
+    funding_request_limit,
     build_funding_rows,
     merge_funding_rows,
     restore_cached_listing_times,
@@ -156,6 +159,99 @@ class DiscoverBybitTests(unittest.TestCase):
 
 
 class IncrementalFundingTests(unittest.TestCase):
+    def test_request_limit_tracks_missing_settlements(self):
+        now = dt.datetime(2026, 7, 24, 8, 17, tzinfo=UTC)
+        cutoff = dt.datetime(2026, 7, 24, 0, 0, 0, 1_000, tzinfo=UTC)
+
+        self.assertEqual(
+            funding_request_limit(
+                {"funding_interval_hours": 8},
+                cutoff,
+                400,
+                now=now,
+            ),
+            4,
+        )
+        self.assertEqual(
+            funding_request_limit(
+                {"funding_interval_hours": 1},
+                cutoff,
+                200,
+                now=now,
+            ),
+            11,
+        )
+        self.assertEqual(
+            funding_request_limit(
+                {"funding_interval_hours": 8},
+                cutoff,
+                400,
+                minimum=12,
+                now=now,
+            ),
+            12,
+        )
+
+    def test_skips_request_until_next_settlement_is_due(self):
+        market = {"funding_interval_hours": 8}
+        latest = dt.datetime(2026, 7, 24, 0, 0, tzinfo=UTC)
+
+        self.assertFalse(
+            funding_is_due(
+                market,
+                latest,
+                now=dt.datetime(2026, 7, 24, 7, 59, tzinfo=UTC),
+            )
+        )
+        self.assertTrue(
+            funding_is_due(
+                market,
+                latest,
+                now=dt.datetime(2026, 7, 24, 8, 0, tzinfo=UTC),
+            )
+        )
+
+    def test_bybit_requests_only_the_missing_time_range(self):
+        cutoff = dt.datetime(2026, 7, 24, 0, 0, tzinfo=UTC)
+        timestamp = int(
+            dt.datetime(2026, 7, 24, 8, 0, tzinfo=UTC).timestamp() * 1000
+        )
+        payload = {
+            "result": {
+                "list": [
+                    {
+                        "fundingRateTimestamp": str(timestamp),
+                        "fundingRate": "0.0001",
+                    }
+                ]
+            }
+        }
+
+        with (
+            patch(
+                "collectors.multi_exchange.fetch_tradifi_data.http_json",
+                return_value=payload,
+            ) as http_json,
+            patch(
+                "collectors.multi_exchange.fetch_tradifi_data.funding_request_limit",
+                return_value=4,
+            ),
+            patch(
+                "collectors.multi_exchange.fetch_tradifi_data.LIMITERS"
+            ) as limiters,
+        ):
+            limiters.__getitem__.return_value.wait.return_value = None
+            records = funding_bybit({"symbol": "AAPLUSDT"}, cutoff)
+
+        params = http_json.call_args.args[1]
+        self.assertEqual(params["startTime"], int(cutoff.timestamp() * 1000))
+        self.assertEqual(params["limit"], 4)
+        self.assertGreaterEqual(params["endTime"], params["startTime"])
+        self.assertEqual(
+            records,
+            [(dt.datetime(2026, 7, 24, 8, 0, tzinfo=UTC), 0.0001)],
+        )
+
     def test_successful_empty_history_is_not_an_error_row(self):
         market = {
             "exchange": "bybit",
