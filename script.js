@@ -124,11 +124,7 @@ function currentRows() {
 
   rows.sort((a, b) => {
     if (state.sort === "symbol_asc") return a.opportunity.underlying.localeCompare(b.opportunity.underlying);
-    if (state.sort === "latest_desc") {
-      const aGap = latestSignedDiff(a.opportunity);
-      const bGap = latestSignedDiff(b.opportunity);
-      return bGap - aGap;
-    }
+    if (state.sort === "spread_asc") return annualizedSignedDiff(a.windowData) - annualizedSignedDiff(b.windowData);
     return annualizedSignedDiff(b.windowData) - annualizedSignedDiff(a.windowData);
   });
   return rows;
