@@ -30,6 +30,13 @@ class StaticDashboardLayoutTests(unittest.TestCase):
         self.assertIn('periodOptions("spread_desc")', self.script)
         self.assertIn('periodOptions("spread_asc")', self.script)
 
+    def test_minimum_spread_filter_uses_absolute_value(self):
+        self.assertIn("年化差值绝对值下限（%）", self.index)
+        self.assertIn(
+            "Math.abs(annualizedSignedDiff(windowData)) < state.minSpread",
+            self.script,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

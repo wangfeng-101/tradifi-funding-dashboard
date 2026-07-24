@@ -114,7 +114,7 @@ function currentRows() {
       if (!windowData) return false;
       const symbols = Object.values(opportunity.symbols || {}).join(" ").toUpperCase();
       if (query && !opportunity.underlying.includes(query) && !symbols.includes(query)) return false;
-      if (state.minSpread !== null && annualizedSignedDiff(windowData) < state.minSpread) return false;
+      if (state.minSpread !== null && Math.abs(annualizedSignedDiff(windowData)) < state.minSpread) return false;
       if (state.fullOnly && !isFullWindow(opportunity, windowData, state.window)) return false;
       if (state.longLeg !== "all" && legFilterValue(windowData.long_leg) !== state.longLeg) return false;
       if (state.shortLeg !== "all" && legFilterValue(windowData.short_leg) !== state.shortLeg) return false;
