@@ -134,6 +134,10 @@ function annualizedSignedDiff(windowData) {
   return Number(windowData.annualized_signed_diff_pct ?? windowData.signed_diff_pct ?? 0);
 }
 
+function selectedWindowReturn(windowData) {
+  return Number(windowData.signed_diff_pct ?? 0);
+}
+
 function isFullWindow(opportunity, windowData, window) {
   if (!windowData?.is_full_window) return false;
   const requiredDays = WINDOW_DAYS[window];
@@ -292,6 +296,7 @@ function rowHtml({ opportunity, windowData }) {
       <td><div class="latest-pair">${latest}</div></td>
       <td><div class="cumulative-pair">${annualized}</div></td>
       <td><div class="spread-value ${signedValueClass(annualizedSignedDiff(windowData))}">${formatPct(annualizedSignedDiff(windowData))}<br><small>${escapeHtml(differenceBasis(opportunity))}</small><br><small>${Number(windowData.elapsed_days || 0).toFixed(2)} 天 · 未扣费用</small></div></td>
+      <td><div class="spread-value ${signedValueClass(selectedWindowReturn(windowData))}">${formatPct(selectedWindowReturn(windowData))}<br><small>${escapeHtml(differenceBasis(opportunity))}</small><br><small>${escapeHtml(state.data.window_labels[state.window])}</small></div></td>
       <td><div class="cumulative-pair">${turnover}</div></td>
       <td><span class="record-count">${escapeHtml(records)}</span></td>
       <td><span class="date-value">${formatDate(opportunity.common_start_time)}</span></td>
@@ -349,6 +354,7 @@ function openDetail(id) {
         <td>${rates}</td>
         <td><span class="receive-text">空 ${escapeHtml(legLabel(item.short_leg))}</span><br><span class="pay-text">多 ${escapeHtml(legLabel(item.long_leg))}</span></td>
         <td class="spread-value ${signedValueClass(annualizedSignedDiff(item))}">${formatPct(annualizedSignedDiff(item))}<br><small>${escapeHtml(differenceBasis(opportunity))}</small></td>
+        <td class="spread-value ${signedValueClass(selectedWindowReturn(item))}">${formatPct(selectedWindowReturn(item))}<br><small>${escapeHtml(differenceBasis(opportunity))}</small></td>
         <td>${Number(item.elapsed_days || 0).toFixed(2)} 天 · ${isFullWindow(opportunity, item, window) ? "完整" : "不足"}</td>
       </tr>
     `;
@@ -357,7 +363,7 @@ function openDetail(id) {
     <div class="detail-grid">${opportunity.venues.map((venue) => detailPanel(opportunity, venue)).join("")}</div>
     <div class="detail-table-scroll">
       <table class="window-detail">
-        <thead><tr><th>周期</th><th>年化 Funding</th><th>建议方向</th><th>带符号年化差值</th><th>数据</th></tr></thead>
+        <thead><tr><th>周期</th><th>年化 Funding</th><th>建议方向</th><th>带符号年化差值</th><th>区间内收益</th><th>数据</th></tr></thead>
         <tbody>${windowRows}</tbody>
       </table>
     </div>
