@@ -8,7 +8,6 @@ const state = {
   minSpread: null,
   longLeg: "all",
   shortLeg: "all",
-  pair: "all",
   fullOnly: false,
   sort: "spread_desc",
   page: 1,
@@ -35,7 +34,6 @@ const elements = {
   minSpread: document.querySelector("#min-spread"),
   longLeg: document.querySelector("#long-leg-filter"),
   shortLeg: document.querySelector("#short-leg-filter"),
-  pair: document.querySelector("#pair-filter"),
   sort: document.querySelector("#sort-select"),
   fullOnly: document.querySelector("#full-window"),
   refresh: document.querySelector("#refresh-button"),
@@ -118,7 +116,6 @@ function currentRows() {
       if (state.fullOnly && !isFullWindow(opportunity, windowData, state.window)) return false;
       if (state.longLeg !== "all" && legFilterValue(windowData.long_leg) !== state.longLeg) return false;
       if (state.shortLeg !== "all" && legFilterValue(windowData.short_leg) !== state.shortLeg) return false;
-      if (state.pair !== "all" && opportunity.id.split(":").slice(0, -1).join(":") !== state.pair) return false;
       return true;
     });
 
@@ -235,22 +232,6 @@ function renderLegOptions() {
   elements.shortLeg.value = state.shortLeg;
 }
 
-function renderPairOptions() {
-  const options = new Map();
-  state.data.opportunities
-    .filter((item) => item.strategy_type === state.strategy)
-    .forEach((item) => {
-      const key = item.id.split(":").slice(0, -1).join(":");
-      options.set(key, item.venues.map(venueLabel).join(" / "));
-    });
-  const sorted = [...options.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  elements.pair.innerHTML = `<option value="all">全部组合</option>` + sorted
-    .map(([key, label]) => `<option value="${escapeHtml(key)}">${escapeHtml(label)}</option>`)
-    .join("");
-  if (options.has(state.pair)) elements.pair.value = state.pair;
-  else { state.pair = "all"; elements.pair.value = "all"; }
-}
-
 function renderMetrics(rows) {
   const top = rows[0];
   const available = state.data.opportunities.filter((item) => item.strategy_type === state.strategy && item.windows[state.window]).length;
@@ -320,7 +301,6 @@ function render() {
   if (!state.data) return;
   renderTabs();
   renderLegOptions();
-  renderPairOptions();
   const rows = currentRows();
   const totalPages = Math.max(1, Math.ceil(rows.length / state.pageSize));
   state.page = Math.min(state.page, totalPages);
@@ -443,7 +423,6 @@ elements.strategyTabs.addEventListener("click", (event) => {
   state.strategy = button.dataset.strategy;
   state.longLeg = "all";
   state.shortLeg = "all";
-  state.pair = "all";
   state.page = 1;
   const url = new URL(window.location.href);
   url.searchParams.set("strategy", state.strategy);
@@ -463,7 +442,6 @@ elements.minSpread.addEventListener("input", () => {
 });
 elements.longLeg.addEventListener("change", () => { state.longLeg = elements.longLeg.value; state.page = 1; render(); });
 elements.shortLeg.addEventListener("change", () => { state.shortLeg = elements.shortLeg.value; state.page = 1; render(); });
-elements.pair.addEventListener("change", () => { state.pair = elements.pair.value; state.page = 1; render(); });
 elements.sort.addEventListener("change", () => { state.sort = elements.sort.value; state.page = 1; render(); });
 elements.fullOnly.addEventListener("change", () => { state.fullOnly = elements.fullOnly.checked; state.page = 1; render(); });
 elements.refresh.addEventListener("click", loadData);
@@ -473,14 +451,12 @@ elements.reset.addEventListener("click", () => {
   state.minSpread = null;
   state.longLeg = "all";
   state.shortLeg = "all";
-  state.pair = "all";
   state.fullOnly = false;
   state.sort = "spread_desc";
   elements.search.value = "";
   elements.minSpread.value = "";
   elements.longLeg.value = "all";
   elements.shortLeg.value = "all";
-  elements.pair.value = "all";
   elements.fullOnly.checked = false;
   elements.sort.value = "spread_desc";
   render();
