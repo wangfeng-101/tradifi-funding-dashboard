@@ -171,6 +171,7 @@ h1 { font-size: 17px; line-height: 1.25; }
 .metric-value { margin-top: 7px; font-size: 23px; font-variant-numeric: tabular-nums; }
 .metric-sub { margin-top: 3px; color: var(--muted); font-size: 11px; }
 .metric-value.positive { color: var(--green); }
+.metric-value.negative { color: var(--red); }
 
 .workspace {
   display: grid;
@@ -244,7 +245,9 @@ tbody tr:hover { background: #171b17; }
   font-variant-numeric: tabular-nums;
 }
 .exchange-value small { color: var(--muted); }
-.spread-value { color: var(--green); font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.spread-value { color: var(--text); font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.spread-value.positive { color: var(--green); }
+.spread-value.negative { color: var(--red); }
 .spread-value small { color: var(--muted); font-size: 10px; font-weight: 400; }
 .record-count, .date-value { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .empty-state { padding: 70px 20px; color: var(--muted); text-align: center; }

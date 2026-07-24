@@ -5,7 +5,7 @@ const state = {
   strategy: new URLSearchParams(window.location.search).get("strategy") || "cross_perp",
   window: new URLSearchParams(window.location.search).get("window") || "1d",
   search: "",
-  minSpread: 0,
+  minSpread: null,
   longLeg: "all",
   shortLeg: "all",
   pair: "all",
@@ -114,7 +114,7 @@ function currentRows() {
       if (!windowData) return false;
       const symbols = Object.values(opportunity.symbols || {}).join(" ").toUpperCase();
       if (query && !opportunity.underlying.includes(query) && !symbols.includes(query)) return false;
-      if (annualizedSpread(windowData) < state.minSpread) return false;
+      if (state.minSpread !== null && annualizedSignedDiff(windowData) < state.minSpread) return false;
       if (state.fullOnly && !isFullWindow(opportunity, windowData, state.window)) return false;
       if (state.longLeg !== "all" && legFilterValue(windowData.long_leg) !== state.longLeg) return false;
       if (state.shortLeg !== "all" && legFilterValue(windowData.short_leg) !== state.shortLeg) return false;
@@ -125,17 +125,17 @@ function currentRows() {
   rows.sort((a, b) => {
     if (state.sort === "symbol_asc") return a.opportunity.underlying.localeCompare(b.opportunity.underlying);
     if (state.sort === "latest_desc") {
-      const aGap = latestGap(a.opportunity);
-      const bGap = latestGap(b.opportunity);
+      const aGap = latestSignedDiff(a.opportunity);
+      const bGap = latestSignedDiff(b.opportunity);
       return bGap - aGap;
     }
-    return annualizedSpread(b.windowData) - annualizedSpread(a.windowData);
+    return annualizedSignedDiff(b.windowData) - annualizedSignedDiff(a.windowData);
   });
   return rows;
 }
 
-function annualizedSpread(windowData) {
-  return Number(windowData.annualized_gross_diff_pct ?? windowData.gross_diff_pct ?? 0);
+function annualizedSignedDiff(windowData) {
+  return Number(windowData.annualized_signed_diff_pct ?? windowData.signed_diff_pct ?? 0);
 }
 
 function isFullWindow(opportunity, windowData, window) {
@@ -153,11 +153,24 @@ function annualizedRates(windowData) {
   return windowData.annualized_rates_pct || windowData.rates_pct || {};
 }
 
-function latestGap(opportunity) {
+function latestSignedDiff(opportunity) {
   const rates = opportunity.venues.map((venue) => (
     venue.market === "spot" ? 0 : Number(opportunity.latest?.[venue.key]?.rate_pct || 0)
   ));
-  return rates.length > 1 ? Math.max(...rates) - Math.min(...rates) : 0;
+  return rates.length > 1 ? rates[0] - rates[1] : 0;
+}
+
+function differenceBasis(opportunity) {
+  const [first, second] = opportunity.venues;
+  if (!first || !second) return "--";
+  return `${venueLabel(first)} − ${venueLabel(second)}`;
+}
+
+function signedValueClass(value) {
+  const number = Number(value || 0);
+  if (number > 0) return "positive";
+  if (number < 0) return "negative";
+  return "";
 }
 
 function renderTabs() {
@@ -230,10 +243,10 @@ function renderMetrics(rows) {
   const fullCount = rows.filter((row) => (
     isFullWindow(row.opportunity, row.windowData, state.window)
   )).length;
-  const topRoute = top
-    ? `${legLabel(top.windowData.short_leg)} → ${legLabel(top.windowData.long_leg)}`
-    : "--";
-  const latestTop = rows.reduce((best, row) => Math.max(best, latestGap(row.opportunity)), 0);
+  const latestTop = rows.length
+    ? rows.reduce((best, row) => Math.max(best, latestSignedDiff(row.opportunity)), Number.NEGATIVE_INFINITY)
+    : null;
+  const annualizedTopValue = top ? annualizedSignedDiff(top.windowData) : null;
   elements.metrics.innerHTML = `
     <div class="metric">
       <div class="metric-label">共有合约</div>
@@ -246,14 +259,14 @@ function renderMetrics(rows) {
       <div class="metric-sub">完整周期 ${fullCount}</div>
     </div>
     <div class="metric">
-      <div class="metric-label">最高年化差值</div>
-      <div class="metric-value positive">${top ? formatPct(annualizedSpread(top.windowData)) : "--"}</div>
-      <div class="metric-sub">${escapeHtml(topRoute)}</div>
+      <div class="metric-label">最高带符号年化差值</div>
+      <div class="metric-value ${top ? signedValueClass(annualizedTopValue) : ""}">${top ? formatPct(annualizedTopValue) : "--"}</div>
+      <div class="metric-sub">${top ? escapeHtml(differenceBasis(top.opportunity)) : "--"}</div>
     </div>
     <div class="metric">
-      <div class="metric-label">最高最新期差值</div>
-      <div class="metric-value">${rows.length ? formatPct(latestTop) : "--"}</div>
-      <div class="metric-sub">单期 funding 绝对差</div>
+      <div class="metric-label">最高带符号最新期差值</div>
+      <div class="metric-value ${rows.length ? signedValueClass(latestTop) : ""}">${rows.length ? formatPct(latestTop) : "--"}</div>
+      <div class="metric-sub">单期 Funding 按组合顺序相减</div>
     </div>
   `;
 }
@@ -282,7 +295,7 @@ function rowHtml({ opportunity, windowData }) {
       <td><div class="route"><span class="receive-text">空 ${escapeHtml(shortLabel)}</span><span class="route-arrow">→</span><span class="pay-text">多 ${escapeHtml(longLabel)}</span></div></td>
       <td><div class="latest-pair">${latest}</div></td>
       <td><div class="cumulative-pair">${annualized}</div></td>
-      <td><div class="spread-value">${formatPct(annualizedSpread(windowData))}<br><small>${Number(windowData.elapsed_days || 0).toFixed(2)} 天 · 未扣费用</small></div></td>
+      <td><div class="spread-value ${signedValueClass(annualizedSignedDiff(windowData))}">${formatPct(annualizedSignedDiff(windowData))}<br><small>${escapeHtml(differenceBasis(opportunity))}</small><br><small>${Number(windowData.elapsed_days || 0).toFixed(2)} 天 · 未扣费用</small></div></td>
       <td><div class="cumulative-pair">${turnover}</div></td>
       <td><span class="record-count">${escapeHtml(records)}</span></td>
       <td><span class="date-value">${formatDate(opportunity.common_start_time)}</span></td>
@@ -339,7 +352,7 @@ function openDetail(id) {
         <td>${escapeHtml(state.data.window_labels[window])}</td>
         <td>${rates}</td>
         <td><span class="receive-text">空 ${escapeHtml(legLabel(item.short_leg))}</span><br><span class="pay-text">多 ${escapeHtml(legLabel(item.long_leg))}</span></td>
-        <td class="spread-value">${formatPct(annualizedSpread(item))}</td>
+        <td class="spread-value ${signedValueClass(annualizedSignedDiff(item))}">${formatPct(annualizedSignedDiff(item))}<br><small>${escapeHtml(differenceBasis(opportunity))}</small></td>
         <td>${Number(item.elapsed_days || 0).toFixed(2)} 天 · ${isFullWindow(opportunity, item, window) ? "完整" : "不足"}</td>
       </tr>
     `;
@@ -348,7 +361,7 @@ function openDetail(id) {
     <div class="detail-grid">${opportunity.venues.map((venue) => detailPanel(opportunity, venue)).join("")}</div>
     <div class="detail-table-scroll">
       <table class="window-detail">
-        <thead><tr><th>周期</th><th>年化 Funding</th><th>建议方向</th><th>年化差值</th><th>数据</th></tr></thead>
+        <thead><tr><th>周期</th><th>年化 Funding</th><th>建议方向</th><th>带符号年化差值</th><th>数据</th></tr></thead>
         <tbody>${windowRows}</tbody>
       </table>
     </div>
@@ -358,12 +371,12 @@ function openDetail(id) {
 
 function exportCsv() {
   const rows = currentRows();
-  const headers = ["underlying", "window", "short_exchange", "long_exchange", "annualized_gross_diff_pct", "cumulative_gross_diff_pct", "elapsed_days", "common_start_time"];
+  const headers = ["underlying", "window", "short_exchange", "long_exchange", "difference_basis", "annualized_signed_diff_pct", "cumulative_signed_diff_pct", "elapsed_days", "common_start_time"];
   const exchangeHeaders = ["leg_1", "leg_1_latest_rate_pct", "leg_1_annualized_rate_pct", "leg_1_cumulative_rate_pct", "leg_1_turnover_24h_usdt", "leg_1_records", "leg_2", "leg_2_latest_rate_pct", "leg_2_annualized_rate_pct", "leg_2_cumulative_rate_pct", "leg_2_turnover_24h_usdt", "leg_2_records"];
   const allHeaders = headers.concat(exchangeHeaders);
   const lines = [allHeaders.join(",")];
   rows.forEach(({ opportunity, windowData }) => {
-    const base = [opportunity.underlying, state.window, windowData.short_exchange, windowData.long_exchange, annualizedSpread(windowData), windowData.gross_diff_pct, windowData.elapsed_days, opportunity.common_start_time];
+    const base = [opportunity.underlying, state.window, windowData.short_exchange, windowData.long_exchange, differenceBasis(opportunity), annualizedSignedDiff(windowData), windowData.signed_diff_pct, windowData.elapsed_days, opportunity.common_start_time];
     opportunity.venues.forEach((venue) => {
       base.push(venueLabel(venue), opportunity.latest?.[venue.key]?.rate_pct ?? "", annualizedRates(windowData)?.[venue.key] ?? "", windowData.rates_pct?.[venue.key] ?? "", opportunity.turnover_24h_usdt?.[venue.key] ?? "", windowData.records?.[venue.key] ?? "");
     });
@@ -430,7 +443,12 @@ elements.body.addEventListener("click", (event) => {
   if (button) openDetail(button.dataset.detail);
 });
 elements.search.addEventListener("input", () => { state.search = elements.search.value; state.page = 1; render(); });
-elements.minSpread.addEventListener("input", () => { state.minSpread = Number(elements.minSpread.value || 0); state.page = 1; render(); });
+elements.minSpread.addEventListener("input", () => {
+  const value = elements.minSpread.value.trim();
+  state.minSpread = value === "" ? null : Number(value);
+  state.page = 1;
+  render();
+});
 elements.longLeg.addEventListener("change", () => { state.longLeg = elements.longLeg.value; state.page = 1; render(); });
 elements.shortLeg.addEventListener("change", () => { state.shortLeg = elements.shortLeg.value; state.page = 1; render(); });
 elements.pair.addEventListener("change", () => { state.pair = elements.pair.value; state.page = 1; render(); });
@@ -440,14 +458,14 @@ elements.refresh.addEventListener("click", loadData);
 elements.export.addEventListener("click", exportCsv);
 elements.reset.addEventListener("click", () => {
   state.search = "";
-  state.minSpread = 0;
+  state.minSpread = null;
   state.longLeg = "all";
   state.shortLeg = "all";
   state.pair = "all";
   state.fullOnly = false;
   state.sort = "spread_desc";
   elements.search.value = "";
-  elements.minSpread.value = "0";
+  elements.minSpread.value = "";
   elements.longLeg.value = "all";
   elements.shortLeg.value = "all";
   elements.pair.value = "all";
