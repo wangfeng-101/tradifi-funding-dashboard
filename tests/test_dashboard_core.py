@@ -6,7 +6,7 @@ import sys
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from dashboard_core import requested_window_is_complete
+from dashboard_core import WINDOW_DELTAS, WINDOW_ORDER, requested_window_is_complete
 
 
 class RequestedWindowCompletenessTests(unittest.TestCase):
@@ -45,6 +45,14 @@ class RequestedWindowCompletenessTests(unittest.TestCase):
                 None,
             )
         )
+
+    def test_dashboard_exposes_three_and_fourteen_day_windows(self):
+        self.assertEqual(
+            WINDOW_ORDER,
+            ("1d", "3d", "7d", "14d", "30d", "since_common_listing"),
+        )
+        self.assertEqual(WINDOW_DELTAS["3d"], timedelta(days=3))
+        self.assertEqual(WINDOW_DELTAS["14d"], timedelta(days=14))
 
 
 if __name__ == "__main__":

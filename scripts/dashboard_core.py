@@ -11,10 +11,12 @@ from turnover import load_turnover_cache
 
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / "sources.json"
-WINDOW_ORDER = ("1d", "7d", "30d", "since_common_listing")
+WINDOW_ORDER = ("1d", "3d", "7d", "14d", "30d", "since_common_listing")
 WINDOW_DELTAS = {
     "1d": timedelta(days=1),
+    "3d": timedelta(days=3),
     "7d": timedelta(days=7),
+    "14d": timedelta(days=14),
     "30d": timedelta(days=30),
     "since_common_listing": None,
 }
@@ -556,7 +558,9 @@ def build_payload() -> dict[str, Any]:
         "windows": list(WINDOW_ORDER),
         "window_labels": {
             "1d": "最近 1 天",
+            "3d": "最近 3 天",
             "7d": "最近 7 天",
+            "14d": "最近 14 天",
             "30d": "最近 30 天",
             "since_common_listing": "共同上线至今",
         },

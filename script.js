@@ -16,7 +16,9 @@ const state = {
 
 const WINDOW_DAYS = {
   "1d": 1,
+  "3d": 3,
   "7d": 7,
+  "14d": 14,
   "30d": 30,
 };
 
