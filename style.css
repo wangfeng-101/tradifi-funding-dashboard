@@ -217,7 +217,7 @@ h1 { font-size: 17px; line-height: 1.25; }
 .error-banner { margin: 0 0 12px; padding: 10px; border: 1px solid #6b403d; color: #ffaaa6; background: #241817; }
 
 .table-shell { min-height: 370px; overflow-x: auto; border-top: 1px solid var(--line); }
-table { width: 100%; min-width: 1260px; border-collapse: collapse; }
+table { width: 100%; min-width: 1160px; border-collapse: collapse; }
 th {
   height: 44px;
   padding: 0 12px;
@@ -289,7 +289,7 @@ tbody tr:hover { background: #171b17; }
 .detail-panel h3 { margin: 0 0 12px; font-size: 13px; }
 .detail-line { display: flex; justify-content: space-between; gap: 15px; margin-top: 8px; color: var(--muted); font-size: 12px; }
 .detail-line strong { color: var(--text); text-align: right; font-weight: 500; }
-.window-detail { margin-top: 16px; width: 100%; min-width: 760px; }
+.window-detail { margin-top: 16px; width: 100%; min-width: 660px; }
 .window-detail td { height: 48px; }
 .detail-table-scroll { overflow-x: auto; }
 

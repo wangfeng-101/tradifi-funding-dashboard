@@ -134,8 +134,22 @@ function annualizedSignedDiff(windowData) {
   return Number(windowData.annualized_signed_diff_pct ?? windowData.signed_diff_pct ?? 0);
 }
 
-function selectedWindowReturn(windowData) {
-  return Number(windowData.signed_diff_pct ?? 0);
+function fundingDifference(opportunity, windowData) {
+  const storedDifference = windowData?.signed_diff_pct;
+  if (storedDifference !== null && storedDifference !== undefined && Number.isFinite(Number(storedDifference))) {
+    return Number(storedDifference);
+  }
+
+  const [first, second] = opportunity.venues;
+  const rates = windowData?.rates_pct || {};
+  const firstRate = first ? Number(rates[first.key]) : Number.NaN;
+  const secondRate = second ? Number(rates[second.key]) : Number.NaN;
+  if (Number.isFinite(firstRate) && Number.isFinite(secondRate)) {
+    return firstRate - secondRate;
+  }
+
+  const elapsedDays = Number(windowData?.elapsed_days || 0);
+  return elapsedDays > 0 ? annualizedSignedDiff(windowData) * elapsedDays / 365 : 0;
 }
 
 function isFullWindow(opportunity, windowData, window) {
@@ -259,7 +273,7 @@ function renderMetrics(rows) {
       <div class="metric-sub">完整周期 ${fullCount}</div>
     </div>
     <div class="metric">
-      <div class="metric-label">最高带符号年化差值</div>
+      <div class="metric-label">最高年化差值</div>
       <div class="metric-value ${top ? signedValueClass(annualizedTopValue) : ""}">${top ? formatPct(annualizedTopValue) : "--"}</div>
       <div class="metric-sub">${top ? escapeHtml(differenceBasis(top.opportunity)) : "--"}</div>
     </div>
@@ -283,7 +297,6 @@ function rowHtml({ opportunity, windowData }) {
   const longLabel = legLabel(windowData.long_leg);
   const symbols = opportunity.venues.map((venue) => opportunity.symbols[venue.key]).filter(Boolean).join(" · ");
   const latest = pairValues(opportunity, opportunity.latest, (item, venue) => venue.market === "spot" ? formatPct(0) : (item ? formatPct(item.rate_pct) : "--"));
-  const annualized = pairValues(opportunity, annualizedRates(windowData), (rate) => formatPct(rate));
   const turnover = pairValues(opportunity, opportunity.turnover_24h_usdt, (value) => formatTurnover(value));
   const records = opportunity.venues.map((venue) => `${venueLabel(venue)} ${windowData.records[venue.key] || 0}`).join(" / ");
   return `
@@ -294,9 +307,8 @@ function rowHtml({ opportunity, windowData }) {
       </td>
       <td><div class="route"><span class="receive-text">空 ${escapeHtml(shortLabel)}</span><span class="route-arrow">→</span><span class="pay-text">多 ${escapeHtml(longLabel)}</span></div></td>
       <td><div class="latest-pair">${latest}</div></td>
-      <td><div class="cumulative-pair">${annualized}</div></td>
       <td><div class="spread-value ${signedValueClass(annualizedSignedDiff(windowData))}">${formatPct(annualizedSignedDiff(windowData))}<br><small>${escapeHtml(differenceBasis(opportunity))}</small><br><small>${Number(windowData.elapsed_days || 0).toFixed(2)} 天 · 未扣费用</small></div></td>
-      <td><div class="spread-value ${signedValueClass(selectedWindowReturn(windowData))}">${formatPct(selectedWindowReturn(windowData))}<br><small>${escapeHtml(differenceBasis(opportunity))}</small><br><small>${escapeHtml(state.data.window_labels[state.window])}</small></div></td>
+      <td><div class="spread-value ${signedValueClass(fundingDifference(opportunity, windowData))}">${formatPct(fundingDifference(opportunity, windowData))}<br><small>${escapeHtml(differenceBasis(opportunity))}</small><br><small>${escapeHtml(state.data.window_labels[state.window])}</small></div></td>
       <td><div class="cumulative-pair">${turnover}</div></td>
       <td><span class="record-count">${escapeHtml(records)}</span></td>
       <td><span class="date-value">${formatDate(opportunity.common_start_time)}</span></td>
@@ -347,14 +359,12 @@ function openDetail(id) {
   const windowRows = state.data.windows.map((window) => {
     const item = opportunity.windows[window];
     if (!item) return "";
-    const rates = opportunity.venues.map((venue) => `<span>${escapeHtml(venueLabel(venue))} ${formatPct(annualizedRates(item)[venue.key])}</span>`).join("<br>");
     return `
       <tr>
         <td>${escapeHtml(state.data.window_labels[window])}</td>
-        <td>${rates}</td>
         <td><span class="receive-text">空 ${escapeHtml(legLabel(item.short_leg))}</span><br><span class="pay-text">多 ${escapeHtml(legLabel(item.long_leg))}</span></td>
         <td class="spread-value ${signedValueClass(annualizedSignedDiff(item))}">${formatPct(annualizedSignedDiff(item))}<br><small>${escapeHtml(differenceBasis(opportunity))}</small></td>
-        <td class="spread-value ${signedValueClass(selectedWindowReturn(item))}">${formatPct(selectedWindowReturn(item))}<br><small>${escapeHtml(differenceBasis(opportunity))}</small></td>
+        <td class="spread-value ${signedValueClass(fundingDifference(opportunity, item))}">${formatPct(fundingDifference(opportunity, item))}<br><small>${escapeHtml(differenceBasis(opportunity))}</small></td>
         <td>${Number(item.elapsed_days || 0).toFixed(2)} 天 · ${isFullWindow(opportunity, item, window) ? "完整" : "不足"}</td>
       </tr>
     `;
@@ -363,7 +373,7 @@ function openDetail(id) {
     <div class="detail-grid">${opportunity.venues.map((venue) => detailPanel(opportunity, venue)).join("")}</div>
     <div class="detail-table-scroll">
       <table class="window-detail">
-        <thead><tr><th>周期</th><th>年化 Funding</th><th>建议方向</th><th>带符号年化差值</th><th>区间内收益</th><th>数据</th></tr></thead>
+        <thead><tr><th>周期</th><th>建议方向</th><th>年化差值</th><th>Funding 差值</th><th>数据</th></tr></thead>
         <tbody>${windowRows}</tbody>
       </table>
     </div>
