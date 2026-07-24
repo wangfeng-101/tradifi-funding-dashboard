@@ -27,10 +27,6 @@
       <div id="strategy-tabs" class="strategy-tabs"></div>
     </section>
 
-    <section class="window-bar" aria-label="统计周期">
-      <div id="window-tabs" class="segmented"></div>
-    </section>
-
     <section id="metrics" class="metrics" aria-label="概览"></section>
 
     <section class="workspace">
@@ -61,9 +57,7 @@
 
         <label class="field-label" for="sort-select">排序</label>
         <select id="sort-select" class="select-input">
-          <option value="spread_desc">年化差值从高到低</option>
-          <option value="spread_asc">年化差值从低到高</option>
-          <option value="symbol_asc">币种名称</option>
+          <option value="1d:spread_desc">最近 1 天年化差值从高到低</option>
         </select>
 
         <label class="check-row">
@@ -86,16 +80,19 @@
 
         <div id="error-banner" class="error-banner" hidden></div>
         <div class="table-shell">
-          <table>
+          <table id="opportunity-table">
             <thead>
               <tr>
                 <th>币种</th>
                 <th>交易腿</th>
                 <th>最新 Funding</th>
-                <th>年化差值</th>
-                <th>Funding 差值</th>
+                <th class="period-heading" data-period="1d">最近 1 天<small>Funding / 年化</small></th>
+                <th class="period-heading" data-period="3d">最近 3 天<small>Funding / 年化</small></th>
+                <th class="period-heading" data-period="7d">最近 7 天<small>Funding / 年化</small></th>
+                <th class="period-heading" data-period="14d">最近 14 天<small>Funding / 年化</small></th>
+                <th class="period-heading" data-period="30d">最近 30 天<small>Funding / 年化</small></th>
+                <th class="period-heading" data-period="since_common_listing">上线至今<small>Funding / 年化</small></th>
                 <th>24h 成交额（万 USDT）</th>
-                <th>周期内记录数</th>
                 <th>共同上线</th>
               </tr>
             </thead>

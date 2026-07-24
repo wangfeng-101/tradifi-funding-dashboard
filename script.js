@@ -9,7 +9,7 @@ const state = {
   longLeg: "all",
   shortLeg: "all",
   fullOnly: false,
-  sort: "spread_desc",
+  sort: new URLSearchParams(window.location.search).get("sort") || "spread_desc",
   page: 1,
   pageSize: 100,
 };
@@ -26,8 +26,8 @@ const elements = {
   dataTime: document.querySelector("#data-time"),
   exchangeStatus: document.querySelector("#exchange-status"),
   strategyTabs: document.querySelector("#strategy-tabs"),
-  windowTabs: document.querySelector("#window-tabs"),
   metrics: document.querySelector("#metrics"),
+  table: document.querySelector("#opportunity-table"),
   body: document.querySelector("#opportunity-body"),
   resultCount: document.querySelector("#result-count"),
   emptyState: document.querySelector("#empty-state"),
@@ -162,10 +162,6 @@ function isFullWindow(opportunity, windowData, window) {
   return windowEnd - commonStart >= requiredDays * 86_400_000;
 }
 
-function annualizedRates(windowData) {
-  return windowData.annualized_rates_pct || windowData.rates_pct || {};
-}
-
 function latestSignedDiff(opportunity) {
   const rates = opportunity.venues.map((venue) => (
     venue.market === "spot" ? 0 : Number(opportunity.latest?.[venue.key]?.rate_pct || 0)
@@ -186,17 +182,26 @@ function signedValueClass(value) {
   return "";
 }
 
-function renderTabs() {
+function renderStrategyTabs() {
   elements.strategyTabs.innerHTML = Object.entries(state.data.strategy_labels).map(([strategy, label]) => `
     <button class="strategy-button ${strategy === state.strategy ? "active" : ""}"
       type="button" data-strategy="${escapeHtml(strategy)}">${escapeHtml(label)}</button>
   `).join("");
-  elements.windowTabs.innerHTML = state.data.windows.map((window) => `
-    <button class="segment-button ${window === state.window ? "active" : ""}"
-      type="button" data-window="${escapeHtml(window)}">
-      ${escapeHtml(state.data.window_labels[window])}
-    </button>
+}
+
+function renderSortOptions() {
+  const periodOptions = (direction) => state.data.windows.map((window) => `
+    <option value="${escapeHtml(window)}:${direction}">
+      ${escapeHtml(state.data.window_labels[window])}年化差值${direction === "spread_desc" ? "从高到低" : "从低到高"}
+    </option>
   `).join("");
+
+  elements.sort.innerHTML = `
+    <optgroup label="年化差值从高到低">${periodOptions("spread_desc")}</optgroup>
+    <optgroup label="年化差值从低到高">${periodOptions("spread_asc")}</optgroup>
+    <option value="symbol_asc">币种名称</option>
+  `;
+  elements.sort.value = state.sort === "symbol_asc" ? "symbol_asc" : `${state.window}:${state.sort}`;
 }
 
 function renderExchangeStatus() {
@@ -235,20 +240,25 @@ function renderLegOptions() {
 }
 
 function renderMetrics(rows) {
-  const top = rows[0];
+  const windowLabel = state.data.window_labels[state.window] || state.window;
   const available = state.data.opportunities.filter((item) => item.strategy_type === state.strategy && item.windows[state.window]).length;
   const fullCount = rows.filter((row) => (
     isFullWindow(row.opportunity, row.windowData, state.window)
   )).length;
+  const annualizedTop = rows.length
+    ? rows.reduce((best, row) => (
+      annualizedSignedDiff(row.windowData) > annualizedSignedDiff(best.windowData) ? row : best
+    ))
+    : null;
   const latestTop = rows.length
     ? rows.reduce((best, row) => Math.max(best, latestSignedDiff(row.opportunity)), Number.NEGATIVE_INFINITY)
     : null;
-  const annualizedTopValue = top ? annualizedSignedDiff(top.windowData) : null;
+  const annualizedTopValue = annualizedTop ? annualizedSignedDiff(annualizedTop.windowData) : null;
   elements.metrics.innerHTML = `
     <div class="metric">
       <div class="metric-label">共有合约</div>
       <div class="metric-value">${available}</div>
-      <div class="metric-sub">当前统计周期</div>
+      <div class="metric-sub">排序周期：${escapeHtml(windowLabel)}</div>
     </div>
     <div class="metric">
       <div class="metric-label">筛选后候选</div>
@@ -257,8 +267,8 @@ function renderMetrics(rows) {
     </div>
     <div class="metric">
       <div class="metric-label">最高年化差值</div>
-      <div class="metric-value ${top ? signedValueClass(annualizedTopValue) : ""}">${top ? formatPct(annualizedTopValue) : "--"}</div>
-      <div class="metric-sub">${top ? escapeHtml(differenceBasis(top.opportunity)) : "--"}</div>
+      <div class="metric-value ${annualizedTop ? signedValueClass(annualizedTopValue) : ""}">${annualizedTop ? formatPct(annualizedTopValue) : "--"}</div>
+      <div class="metric-sub">${annualizedTop ? `${escapeHtml(windowLabel)} · ${escapeHtml(differenceBasis(annualizedTop.opportunity))}` : "--"}</div>
     </div>
     <div class="metric">
       <div class="metric-label">最高带符号最新期差值</div>
@@ -275,13 +285,27 @@ function pairValues(opportunity, source, formatter) {
   }).join("");
 }
 
+function periodCellHtml(opportunity, window) {
+  const item = opportunity.windows?.[window];
+  if (!item) return `<td class="period-column" data-period="${escapeHtml(window)}"><span class="missing-value">--</span></td>`;
+
+  const funding = fundingDifference(opportunity, item);
+  const annualized = annualizedSignedDiff(item);
+  return `
+    <td class="period-column" data-period="${escapeHtml(window)}">
+      <div class="period-value ${signedValueClass(funding)}">${formatPct(funding)}</div>
+      <div class="period-annualized ${signedValueClass(annualized)}"><small>年化</small> ${formatPct(annualized)}</div>
+    </td>
+  `;
+}
+
 function rowHtml({ opportunity, windowData }) {
   const shortLabel = legLabel(windowData.short_leg);
   const longLabel = legLabel(windowData.long_leg);
   const symbols = opportunity.venues.map((venue) => opportunity.symbols[venue.key]).filter(Boolean).join(" · ");
   const latest = pairValues(opportunity, opportunity.latest, (item, venue) => venue.market === "spot" ? formatPct(0) : (item ? formatPct(item.rate_pct) : "--"));
   const turnover = pairValues(opportunity, opportunity.turnover_24h_usdt, (value) => formatTurnover(value));
-  const records = opportunity.venues.map((venue) => `${venueLabel(venue)} ${windowData.records[venue.key] || 0}`).join(" / ");
+  const periodCells = state.data.windows.map((window) => periodCellHtml(opportunity, window)).join("");
   return `
     <tr>
       <td>
@@ -290,10 +314,8 @@ function rowHtml({ opportunity, windowData }) {
       </td>
       <td><div class="route"><span class="receive-text">空 ${escapeHtml(shortLabel)}</span><span class="route-arrow">→</span><span class="pay-text">多 ${escapeHtml(longLabel)}</span></div></td>
       <td><div class="latest-pair">${latest}</div></td>
-      <td><div class="spread-value ${signedValueClass(annualizedSignedDiff(windowData))}">${formatPct(annualizedSignedDiff(windowData))}<br><small>${escapeHtml(differenceBasis(opportunity))}</small><br><small>${Number(windowData.elapsed_days || 0).toFixed(2)} 天 · 未扣费用</small></div></td>
-      <td><div class="spread-value ${signedValueClass(fundingDifference(opportunity, windowData))}">${formatPct(fundingDifference(opportunity, windowData))}<br><small>${escapeHtml(differenceBasis(opportunity))}</small><br><small>${escapeHtml(state.data.window_labels[state.window])}</small></div></td>
+      ${periodCells}
       <td><div class="cumulative-pair">${turnover}</div></td>
-      <td><span class="record-count">${escapeHtml(records)}</span></td>
       <td><span class="date-value">${formatDate(opportunity.common_start_time)}</span></td>
     </tr>
   `;
@@ -301,13 +323,15 @@ function rowHtml({ opportunity, windowData }) {
 
 function render() {
   if (!state.data) return;
-  renderTabs();
+  renderStrategyTabs();
+  renderSortOptions();
   renderLegOptions();
   const rows = currentRows();
   const totalPages = Math.max(1, Math.ceil(rows.length / state.pageSize));
   state.page = Math.min(state.page, totalPages);
   const pageRows = rows.slice((state.page - 1) * state.pageSize, state.page * state.pageSize);
   renderMetrics(rows);
+  elements.table.dataset.sortWindow = state.sort === "symbol_asc" ? "" : state.window;
   elements.body.innerHTML = pageRows.map(rowHtml).join("");
   elements.resultCount.textContent = `${rows.length} 条 · 第 ${state.page}/${totalPages} 页`;
   elements.emptyState.hidden = rows.length > 0;
@@ -365,21 +389,29 @@ function openDetail(id) {
 
 function exportCsv() {
   const rows = currentRows();
-  const headers = ["underlying", "window", "short_exchange", "long_exchange", "difference_basis", "annualized_signed_diff_pct", "cumulative_signed_diff_pct", "elapsed_days", "common_start_time"];
-  const exchangeHeaders = ["leg_1", "leg_1_latest_rate_pct", "leg_1_annualized_rate_pct", "leg_1_cumulative_rate_pct", "leg_1_turnover_24h_usdt", "leg_1_records", "leg_2", "leg_2_latest_rate_pct", "leg_2_annualized_rate_pct", "leg_2_cumulative_rate_pct", "leg_2_turnover_24h_usdt", "leg_2_records"];
+  const periodHeaders = state.data.windows.flatMap((window) => [
+    `${window}_funding_diff_pct`,
+    `${window}_annualized_diff_pct`,
+  ]);
+  const headers = ["underlying", "sort_window", "short_exchange", "long_exchange", "difference_basis", ...periodHeaders, "common_start_time"];
+  const exchangeHeaders = ["leg_1", "leg_1_latest_rate_pct", "leg_1_turnover_24h_usdt", "leg_2", "leg_2_latest_rate_pct", "leg_2_turnover_24h_usdt"];
   const allHeaders = headers.concat(exchangeHeaders);
   const lines = [allHeaders.join(",")];
   rows.forEach(({ opportunity, windowData }) => {
-    const base = [opportunity.underlying, state.window, windowData.short_exchange, windowData.long_exchange, differenceBasis(opportunity), annualizedSignedDiff(windowData), windowData.signed_diff_pct, windowData.elapsed_days, opportunity.common_start_time];
+    const periodValues = state.data.windows.flatMap((window) => {
+      const item = opportunity.windows?.[window];
+      return item ? [fundingDifference(opportunity, item), annualizedSignedDiff(item)] : ["", ""];
+    });
+    const base = [opportunity.underlying, state.window, windowData.short_exchange, windowData.long_exchange, differenceBasis(opportunity), ...periodValues, opportunity.common_start_time];
     opportunity.venues.forEach((venue) => {
-      base.push(venueLabel(venue), opportunity.latest?.[venue.key]?.rate_pct ?? "", annualizedRates(windowData)?.[venue.key] ?? "", windowData.rates_pct?.[venue.key] ?? "", opportunity.turnover_24h_usdt?.[venue.key] ?? "", windowData.records?.[venue.key] ?? "");
+      base.push(venueLabel(venue), opportunity.latest?.[venue.key]?.rate_pct ?? "", opportunity.turnover_24h_usdt?.[venue.key] ?? "");
     });
     lines.push(base.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(","));
   });
   const blob = new Blob(["\ufeff" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
-  link.download = `tradifi_funding_${state.window}_${new Date().toISOString().slice(0, 10)}.csv`;
+  link.download = `tradifi_funding_all_windows_${new Date().toISOString().slice(0, 10)}.csv`;
   link.click();
   URL.revokeObjectURL(link.href);
 }
@@ -393,6 +425,8 @@ async function loadData() {
     const response = await fetch(dataUrl, { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     state.data = await response.json();
+    if (!state.data.windows.includes(state.window)) state.window = state.data.windows[0] || "1d";
+    if (!["spread_desc", "spread_asc", "symbol_asc"].includes(state.sort)) state.sort = "spread_desc";
     renderExchangeStatus();
     const metadata = Object.values(state.data.metadata_by_pair || {})[0];
     const turnoverTime = state.data.turnover_metadata?.generated_at_utc;
@@ -412,13 +446,6 @@ async function loadData() {
   }
 }
 
-elements.windowTabs.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-window]");
-  if (!button) return;
-  state.window = button.dataset.window;
-  state.page = 1;
-  render();
-});
 elements.strategyTabs.addEventListener("click", (event) => {
   const button = event.target.closest("[data-strategy]");
   if (!button) return;
@@ -444,7 +471,21 @@ elements.minSpread.addEventListener("input", () => {
 });
 elements.longLeg.addEventListener("change", () => { state.longLeg = elements.longLeg.value; state.page = 1; render(); });
 elements.shortLeg.addEventListener("change", () => { state.shortLeg = elements.shortLeg.value; state.page = 1; render(); });
-elements.sort.addEventListener("change", () => { state.sort = elements.sort.value; state.page = 1; render(); });
+elements.sort.addEventListener("change", () => {
+  if (elements.sort.value === "symbol_asc") {
+    state.sort = "symbol_asc";
+  } else {
+    const [window, direction] = elements.sort.value.split(":");
+    state.window = window;
+    state.sort = direction;
+  }
+  const url = new URL(window.location.href);
+  url.searchParams.set("window", state.window);
+  url.searchParams.set("sort", state.sort);
+  window.history.replaceState({}, "", url);
+  state.page = 1;
+  render();
+});
 elements.fullOnly.addEventListener("change", () => { state.fullOnly = elements.fullOnly.checked; state.page = 1; render(); });
 elements.refresh.addEventListener("click", loadData);
 elements.export.addEventListener("click", exportCsv);
@@ -455,12 +496,13 @@ elements.reset.addEventListener("click", () => {
   state.shortLeg = "all";
   state.fullOnly = false;
   state.sort = "spread_desc";
+  state.window = "1d";
   elements.search.value = "";
   elements.minSpread.value = "";
   elements.longLeg.value = "all";
   elements.shortLeg.value = "all";
   elements.fullOnly.checked = false;
-  elements.sort.value = "spread_desc";
+  elements.sort.value = "1d:spread_desc";
   render();
 });
 elements.pagination.addEventListener("click", (event) => {
