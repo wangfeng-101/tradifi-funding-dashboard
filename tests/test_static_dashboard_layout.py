@@ -55,6 +55,13 @@ class StaticDashboardLayoutTests(unittest.TestCase):
             self.script,
         )
 
+    def test_pagination_supports_direct_page_jump(self):
+        self.assertIn('id="page-jump-input"', self.script)
+        self.assertIn("data-page-jump", self.script)
+        self.assertIn("function jumpToPage()", self.script)
+        self.assertIn('event.key !== "Enter"', self.script)
+        self.assertIn("targetPage <= totalPages", self.script)
+
 
 if __name__ == "__main__":
     unittest.main()

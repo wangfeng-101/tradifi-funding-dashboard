@@ -362,10 +362,17 @@ function render() {
   elements.body.innerHTML = pageRows.map(rowHtml).join("");
   elements.resultCount.textContent = `${rows.length} 条 · 第 ${state.page}/${totalPages} 页`;
   elements.emptyState.hidden = rows.length > 0;
+  elements.pagination.dataset.totalPages = String(totalPages);
   elements.pagination.innerHTML = rows.length ? `
     <button class="page-button" type="button" data-page="prev" ${state.page === 1 ? "disabled" : ""} aria-label="上一页">‹</button>
     <span>${state.page} / ${totalPages}</span>
     <button class="page-button" type="button" data-page="next" ${state.page === totalPages ? "disabled" : ""} aria-label="下一页">›</button>
+    <div class="page-jump">
+      <span>跳至</span>
+      <input id="page-jump-input" class="page-jump-input" type="number" min="1" max="${totalPages}" step="1" inputmode="numeric" aria-label="跳转页码">
+      <span>页</span>
+      <button class="page-jump-button" type="button" data-page-jump>跳转</button>
+    </div>
   ` : "";
 }
 
@@ -579,12 +586,39 @@ elements.reset.addEventListener("click", () => {
   render();
 });
 elements.pagination.addEventListener("click", (event) => {
+  const jumpButton = event.target.closest("[data-page-jump]");
+  if (jumpButton) {
+    jumpToPage();
+    return;
+  }
   const button = event.target.closest("[data-page]");
   if (!button || button.disabled) return;
   state.page += button.dataset.page === "next" ? 1 : -1;
   render();
   document.querySelector(".results").scrollIntoView({ behavior: "smooth", block: "start" });
 });
+elements.pagination.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" || !event.target.matches("#page-jump-input")) return;
+  event.preventDefault();
+  jumpToPage();
+});
+
+function jumpToPage() {
+  const input = elements.pagination.querySelector("#page-jump-input");
+  if (!input) return;
+  const totalPages = Number(elements.pagination.dataset.totalPages || 1);
+  const targetPage = Number(input.value);
+  const isValid = Number.isInteger(targetPage) && targetPage >= 1 && targetPage <= totalPages;
+  input.setCustomValidity(isValid ? "" : `请输入 1 到 ${totalPages} 之间的页码`);
+  if (!isValid) {
+    input.reportValidity();
+    return;
+  }
+  state.page = targetPage;
+  render();
+  document.querySelector(".results").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 elements.mobileFilterToggle.addEventListener("click", () => {
   const collapsed = elements.filters.classList.toggle("mobile-collapsed");
   elements.mobileFilterToggle.setAttribute("aria-expanded", String(!collapsed));
