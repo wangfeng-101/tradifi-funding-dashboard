@@ -37,6 +37,24 @@ class StaticDashboardLayoutTests(unittest.TestCase):
             self.script,
         )
 
+    def test_long_and_short_turnover_range_filters_are_present(self):
+        for element_id in (
+            "long-turnover-min",
+            "long-turnover-max",
+            "short-turnover-min",
+            "short-turnover-max",
+        ):
+            self.assertIn(f'id="{element_id}"', self.index)
+        self.assertIn("function turnoverWanForLeg(opportunity, leg)", self.script)
+        self.assertIn(
+            "isWithinRange(longTurnover, state.longTurnoverMin, state.longTurnoverMax)",
+            self.script,
+        )
+        self.assertIn(
+            "isWithinRange(shortTurnover, state.shortTurnoverMin, state.shortTurnoverMax)",
+            self.script,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

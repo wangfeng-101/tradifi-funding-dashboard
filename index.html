@@ -50,10 +50,28 @@
           <option value="all">全部交易腿</option>
         </select>
 
+        <div class="turnover-filter-group">
+          <label class="field-label" for="long-turnover-min">做多方向 24h 成交额（万 USDT）</label>
+          <div class="range-inputs" aria-label="做多方向 24h 成交额区间">
+            <input id="long-turnover-min" class="text-input range-input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="最低">
+            <span aria-hidden="true">-</span>
+            <input id="long-turnover-max" class="text-input range-input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="最高">
+          </div>
+        </div>
+
         <label class="field-label" for="short-leg-filter">做空方向</label>
         <select id="short-leg-filter" class="select-input">
           <option value="all">全部交易腿</option>
         </select>
+
+        <div class="turnover-filter-group">
+          <label class="field-label" for="short-turnover-min">做空方向 24h 成交额（万 USDT）</label>
+          <div class="range-inputs" aria-label="做空方向 24h 成交额区间">
+            <input id="short-turnover-min" class="text-input range-input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="最低">
+            <span aria-hidden="true">-</span>
+            <input id="short-turnover-max" class="text-input range-input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="最高">
+          </div>
+        </div>
 
         <label class="field-label" for="sort-select">排序</label>
         <select id="sort-select" class="select-input">

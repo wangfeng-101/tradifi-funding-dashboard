@@ -8,6 +8,10 @@ const state = {
   minSpread: null,
   longLeg: "all",
   shortLeg: "all",
+  longTurnoverMin: null,
+  longTurnoverMax: null,
+  shortTurnoverMin: null,
+  shortTurnoverMax: null,
   fullOnly: false,
   sort: new URLSearchParams(window.location.search).get("sort") || "spread_desc",
   page: 1,
@@ -36,6 +40,10 @@ const elements = {
   minSpread: document.querySelector("#min-spread"),
   longLeg: document.querySelector("#long-leg-filter"),
   shortLeg: document.querySelector("#short-leg-filter"),
+  longTurnoverMin: document.querySelector("#long-turnover-min"),
+  longTurnoverMax: document.querySelector("#long-turnover-max"),
+  shortTurnoverMin: document.querySelector("#short-turnover-min"),
+  shortTurnoverMax: document.querySelector("#short-turnover-max"),
   sort: document.querySelector("#sort-select"),
   fullOnly: document.querySelector("#full-window"),
   refresh: document.querySelector("#refresh-button"),
@@ -74,6 +82,21 @@ function legLabel(leg) {
 
 function legFilterValue(leg) {
   return leg?.exchange && leg?.market ? `${leg.exchange}:${leg.market}` : "";
+}
+
+function turnoverWanForLeg(opportunity, leg) {
+  const venue = opportunity.venues.find(
+    (candidate) => candidate.exchange === leg?.exchange && candidate.market === leg?.market,
+  );
+  const value = venue ? opportunity.turnover_24h_usdt?.[venue.key] : null;
+  const number = Number(value);
+  return value === null || value === undefined || !Number.isFinite(number) ? null : number / 10_000;
+}
+
+function isWithinRange(value, minimum, maximum) {
+  if (minimum === null && maximum === null) return true;
+  if (value === null) return false;
+  return (minimum === null || value >= minimum) && (maximum === null || value <= maximum);
 }
 
 function venueLabel(venue) {
@@ -118,6 +141,10 @@ function currentRows() {
       if (state.fullOnly && !isFullWindow(opportunity, windowData, state.window)) return false;
       if (state.longLeg !== "all" && legFilterValue(windowData.long_leg) !== state.longLeg) return false;
       if (state.shortLeg !== "all" && legFilterValue(windowData.short_leg) !== state.shortLeg) return false;
+      const longTurnover = turnoverWanForLeg(opportunity, windowData.long_leg);
+      const shortTurnover = turnoverWanForLeg(opportunity, windowData.short_leg);
+      if (!isWithinRange(longTurnover, state.longTurnoverMin, state.longTurnoverMax)) return false;
+      if (!isWithinRange(shortTurnover, state.shortTurnoverMin, state.shortTurnoverMax)) return false;
       return true;
     });
 
@@ -471,6 +498,39 @@ elements.minSpread.addEventListener("input", () => {
 });
 elements.longLeg.addEventListener("change", () => { state.longLeg = elements.longLeg.value; state.page = 1; render(); });
 elements.shortLeg.addEventListener("change", () => { state.shortLeg = elements.shortLeg.value; state.page = 1; render(); });
+
+function nullableNumber(input) {
+  const value = input.value.trim();
+  return value === "" ? null : Number(value);
+}
+
+function syncTurnoverRanges() {
+  state.longTurnoverMin = nullableNumber(elements.longTurnoverMin);
+  state.longTurnoverMax = nullableNumber(elements.longTurnoverMax);
+  state.shortTurnoverMin = nullableNumber(elements.shortTurnoverMin);
+  state.shortTurnoverMax = nullableNumber(elements.shortTurnoverMax);
+
+  const ranges = [
+    [elements.longTurnoverMin, elements.longTurnoverMax, state.longTurnoverMin, state.longTurnoverMax],
+    [elements.shortTurnoverMin, elements.shortTurnoverMax, state.shortTurnoverMin, state.shortTurnoverMax],
+  ];
+  ranges.forEach(([minimumInput, maximumInput, minimum, maximum]) => {
+    const invalid = minimum !== null && maximum !== null && minimum > maximum;
+    minimumInput.setCustomValidity(invalid ? "最低值不能高于最高值" : "");
+    maximumInput.setCustomValidity(invalid ? "最高值不能低于最低值" : "");
+  });
+
+  state.page = 1;
+  render();
+}
+
+[
+  elements.longTurnoverMin,
+  elements.longTurnoverMax,
+  elements.shortTurnoverMin,
+  elements.shortTurnoverMax,
+].forEach((input) => input.addEventListener("input", syncTurnoverRanges));
+
 elements.sort.addEventListener("change", () => {
   if (elements.sort.value === "symbol_asc") {
     state.sort = "symbol_asc";
@@ -494,6 +554,10 @@ elements.reset.addEventListener("click", () => {
   state.minSpread = null;
   state.longLeg = "all";
   state.shortLeg = "all";
+  state.longTurnoverMin = null;
+  state.longTurnoverMax = null;
+  state.shortTurnoverMin = null;
+  state.shortTurnoverMax = null;
   state.fullOnly = false;
   state.sort = "spread_desc";
   state.window = "1d";
@@ -501,6 +565,15 @@ elements.reset.addEventListener("click", () => {
   elements.minSpread.value = "";
   elements.longLeg.value = "all";
   elements.shortLeg.value = "all";
+  [
+    elements.longTurnoverMin,
+    elements.longTurnoverMax,
+    elements.shortTurnoverMin,
+    elements.shortTurnoverMax,
+  ].forEach((input) => {
+    input.value = "";
+    input.setCustomValidity("");
+  });
   elements.fullOnly.checked = false;
   elements.sort.value = "1d:spread_desc";
   render();

@@ -182,6 +182,16 @@ h1 { font-size: 17px; line-height: 1.25; }
   color: var(--text);
 }
 .text-input:focus, .select-input:focus { border-color: var(--green); }
+.turnover-filter-group .field-label { margin-top: 16px; }
+.range-inputs {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+}
+.range-inputs > span { color: var(--muted); text-align: center; }
+.range-input { min-width: 0; font-variant-numeric: tabular-nums; }
+.range-input:invalid { border-color: var(--red); }
 .check-row { margin-top: 20px; }
 
 .results { min-width: 0; padding: 20px 24px 36px; }
