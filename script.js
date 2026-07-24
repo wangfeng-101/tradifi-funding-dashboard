@@ -6,7 +6,8 @@ const state = {
   window: new URLSearchParams(window.location.search).get("window") || "1d",
   search: "",
   minSpread: 0,
-  route: "all",
+  longLeg: "all",
+  shortLeg: "all",
   pair: "all",
   fullOnly: false,
   sort: "spread_desc",
@@ -32,7 +33,8 @@ const elements = {
   errorBanner: document.querySelector("#error-banner"),
   search: document.querySelector("#search-input"),
   minSpread: document.querySelector("#min-spread"),
-  route: document.querySelector("#route-filter"),
+  longLeg: document.querySelector("#long-leg-filter"),
+  shortLeg: document.querySelector("#short-leg-filter"),
   pair: document.querySelector("#pair-filter"),
   sort: document.querySelector("#sort-select"),
   fullOnly: document.querySelector("#full-window"),
@@ -68,6 +70,10 @@ function marketLabel(market) {
 
 function legLabel(leg) {
   return `${exchangeLabel(leg?.exchange)} ${marketLabel(leg?.market)}`;
+}
+
+function legFilterValue(leg) {
+  return leg?.exchange && leg?.market ? `${leg.exchange}:${leg.market}` : "";
 }
 
 function venueLabel(venue) {
@@ -110,7 +116,8 @@ function currentRows() {
       if (query && !opportunity.underlying.includes(query) && !symbols.includes(query)) return false;
       if (annualizedSpread(windowData) < state.minSpread) return false;
       if (state.fullOnly && !isFullWindow(opportunity, windowData, state.window)) return false;
-      if (state.route !== "all" && windowData.short_exchange !== state.route) return false;
+      if (state.longLeg !== "all" && legFilterValue(windowData.long_leg) !== state.longLeg) return false;
+      if (state.shortLeg !== "all" && legFilterValue(windowData.short_leg) !== state.shortLeg) return false;
       if (state.pair !== "all" && opportunity.id.split(":").slice(0, -1).join(":") !== state.pair) return false;
       return true;
     });
@@ -171,12 +178,34 @@ function renderExchangeStatus() {
     <span class="exchange-chip ${exchange.connected ? "" : "pending"}" style="--chip-color:${escapeHtml(exchange.accent)}"
       title="${exchange.connected ? "已接入真实数据" : "待接入"}">${escapeHtml(exchange.label)}</span>
   `).join("");
+}
 
-  const currentValue = elements.route.value;
-  elements.route.innerHTML = `<option value="all">全部方向</option>` + Object.entries(state.data.exchanges)
-    .map(([id, exchange]) => `<option value="${escapeHtml(id)}">做空 ${escapeHtml(exchange.label)}</option>`)
+function renderLegOptions() {
+  const longOptions = new Map();
+  const shortOptions = new Map();
+
+  state.data.opportunities
+    .filter((item) => item.strategy_type === state.strategy && item.windows[state.window])
+    .forEach((item) => {
+      const windowData = item.windows[state.window];
+      const longValue = legFilterValue(windowData.long_leg);
+      const shortValue = legFilterValue(windowData.short_leg);
+      if (longValue) longOptions.set(longValue, legLabel(windowData.long_leg));
+      if (shortValue) shortOptions.set(shortValue, legLabel(windowData.short_leg));
+    });
+
+  const renderOptions = (options) => [...options.entries()]
+    .sort((a, b) => a[1].localeCompare(b[1]))
+    .map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`)
     .join("");
-  elements.route.value = currentValue in state.data.exchanges ? currentValue : "all";
+
+  elements.longLeg.innerHTML = `<option value="all">全部交易腿</option>${renderOptions(longOptions)}`;
+  elements.shortLeg.innerHTML = `<option value="all">全部交易腿</option>${renderOptions(shortOptions)}`;
+
+  if (!longOptions.has(state.longLeg)) state.longLeg = "all";
+  if (!shortOptions.has(state.shortLeg)) state.shortLeg = "all";
+  elements.longLeg.value = state.longLeg;
+  elements.shortLeg.value = state.shortLeg;
 }
 
 function renderPairOptions() {
@@ -263,12 +292,13 @@ function rowHtml({ opportunity, windowData }) {
 
 function render() {
   if (!state.data) return;
+  renderTabs();
+  renderLegOptions();
+  renderPairOptions();
   const rows = currentRows();
   const totalPages = Math.max(1, Math.ceil(rows.length / state.pageSize));
   state.page = Math.min(state.page, totalPages);
   const pageRows = rows.slice((state.page - 1) * state.pageSize, state.page * state.pageSize);
-  renderTabs();
-  renderPairOptions();
   renderMetrics(rows);
   elements.body.innerHTML = pageRows.map(rowHtml).join("");
   elements.resultCount.textContent = `${rows.length} 条 · 第 ${state.page}/${totalPages} 页`;
@@ -386,6 +416,8 @@ elements.strategyTabs.addEventListener("click", (event) => {
   const button = event.target.closest("[data-strategy]");
   if (!button) return;
   state.strategy = button.dataset.strategy;
+  state.longLeg = "all";
+  state.shortLeg = "all";
   state.pair = "all";
   state.page = 1;
   const url = new URL(window.location.href);
@@ -399,7 +431,8 @@ elements.body.addEventListener("click", (event) => {
 });
 elements.search.addEventListener("input", () => { state.search = elements.search.value; state.page = 1; render(); });
 elements.minSpread.addEventListener("input", () => { state.minSpread = Number(elements.minSpread.value || 0); state.page = 1; render(); });
-elements.route.addEventListener("change", () => { state.route = elements.route.value; state.page = 1; render(); });
+elements.longLeg.addEventListener("change", () => { state.longLeg = elements.longLeg.value; state.page = 1; render(); });
+elements.shortLeg.addEventListener("change", () => { state.shortLeg = elements.shortLeg.value; state.page = 1; render(); });
 elements.pair.addEventListener("change", () => { state.pair = elements.pair.value; state.page = 1; render(); });
 elements.sort.addEventListener("change", () => { state.sort = elements.sort.value; state.page = 1; render(); });
 elements.fullOnly.addEventListener("change", () => { state.fullOnly = elements.fullOnly.checked; state.page = 1; render(); });
@@ -408,13 +441,15 @@ elements.export.addEventListener("click", exportCsv);
 elements.reset.addEventListener("click", () => {
   state.search = "";
   state.minSpread = 0;
-  state.route = "all";
+  state.longLeg = "all";
+  state.shortLeg = "all";
   state.pair = "all";
   state.fullOnly = false;
   state.sort = "spread_desc";
   elements.search.value = "";
   elements.minSpread.value = "0";
-  elements.route.value = "all";
+  elements.longLeg.value = "all";
+  elements.shortLeg.value = "all";
   elements.pair.value = "all";
   elements.fullOnly.checked = false;
   elements.sort.value = "spread_desc";

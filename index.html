@@ -49,9 +49,14 @@
         <label class="field-label" for="min-spread">最小年化差值（%）</label>
         <input id="min-spread" class="text-input" type="number" min="0" step="0.01" value="0">
 
-        <label class="field-label" for="route-filter">收款方向</label>
-        <select id="route-filter" class="select-input">
-          <option value="all">全部方向</option>
+        <label class="field-label" for="long-leg-filter">做多方向</label>
+        <select id="long-leg-filter" class="select-input">
+          <option value="all">全部交易腿</option>
+        </select>
+
+        <label class="field-label" for="short-leg-filter">做空方向</label>
+        <select id="short-leg-filter" class="select-input">
+          <option value="all">全部交易腿</option>
         </select>
 
         <label class="field-label" for="pair-filter">交易所组合</label>
