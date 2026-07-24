@@ -203,6 +203,19 @@ th {
   text-align: left;
   white-space: nowrap;
 }
+#opportunity-table th:first-child,
+#opportunity-table td:first-child {
+  width: 170px;
+  min-width: 170px;
+  max-width: 170px;
+  padding-right: 6px;
+}
+#opportunity-table th:nth-child(2),
+#opportunity-table td:nth-child(2) {
+  width: 260px;
+  min-width: 260px;
+  padding-left: 6px;
+}
 .period-heading small {
   display: block;
   margin-top: 3px;
@@ -214,7 +227,15 @@ tbody tr { background: transparent; }
 tbody tr:hover { background: #171b17; }
 .symbol-button { border: 0; padding: 0; background: transparent; color: var(--text); font-size: 14px; font-weight: 700; }
 .symbol-button:hover { color: var(--green); }
-.symbol-sub { margin-top: 4px; color: var(--muted); font-size: 10px; }
+.symbol-sub {
+  max-width: 150px;
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .route { gap: 7px; white-space: nowrap; }
 .route-arrow { color: var(--muted); }
 .receive-text { color: var(--green); }
