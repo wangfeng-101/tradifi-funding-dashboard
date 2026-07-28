@@ -350,7 +350,7 @@ tbody tr:hover { background: #171b17; }
 .page-jump-button:hover { border-color: var(--green); }
 
 .detail-dialog {
-  width: min(760px, calc(100vw - 32px));
+  width: min(940px, calc(100vw - 32px));
   max-height: calc(100vh - 32px);
   padding: 0;
   border: 1px solid var(--line);
@@ -368,9 +368,78 @@ tbody tr:hover { background: #171b17; }
 .detail-panel h3 { margin: 0 0 12px; font-size: 13px; }
 .detail-line { display: flex; justify-content: space-between; gap: 15px; margin-top: 8px; color: var(--muted); font-size: 12px; }
 .detail-line strong { color: var(--text); text-align: right; font-weight: 500; }
-.window-detail { margin-top: 16px; width: 100%; min-width: 660px; }
-.window-detail td { height: 48px; }
-.detail-table-scroll { overflow-x: auto; }
+.funding-chart-section { margin-top: 18px; padding-top: 17px; border-top: 1px solid var(--line); }
+.funding-chart-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.funding-chart-head h3 { margin: 0; font-size: 14px; }
+.funding-chart-head p { margin-top: 4px; color: var(--muted); font-size: 11px; }
+.chart-window-picker { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 4px; }
+.chart-window-button {
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.chart-window-button:hover { border-color: var(--green); color: var(--text); }
+.chart-window-button[aria-pressed="true"] {
+  border-color: var(--green);
+  background: rgba(35, 213, 166, 0.08);
+  color: var(--green);
+}
+.funding-chart-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.funding-chart-summary > div { min-width: 0; padding: 11px 12px; border-right: 1px solid var(--line); }
+.funding-chart-summary > div:last-child { border-right: 0; }
+.funding-chart-summary span { display: block; color: var(--muted); font-size: 10px; }
+.funding-chart-summary strong {
+  display: block;
+  overflow-wrap: anywhere;
+  margin-top: 4px;
+  color: var(--text);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.funding-chart-summary strong.positive { color: var(--green); }
+.funding-chart-summary strong.negative { color: var(--red); }
+.funding-chart {
+  min-height: 360px;
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.funding-chart-svg { display: block; background: var(--surface-2); }
+.chart-section-label { fill: var(--text); font-size: 11px; font-weight: 600; }
+.chart-axis-label, .chart-time-label { fill: var(--muted); font-size: 9px; font-variant-numeric: tabular-nums; }
+.chart-grid-line { stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.chart-zero-line { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 4; opacity: 0.7; vector-effect: non-scaling-stroke; }
+.chart-time-tick { stroke: var(--muted); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.chart-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.chart-positive { fill: var(--green); stroke: var(--green); }
+.chart-negative { fill: var(--red); stroke: var(--red); }
+.chart-line.chart-positive, .chart-line.chart-negative { fill: none; }
+.chart-positive-fill { fill: rgba(35, 213, 166, 0.72); }
+.chart-negative-fill { fill: rgba(255, 102, 102, 0.72); }
+.chart-loading, .chart-empty, .chart-error {
+  display: grid;
+  place-items: center;
+  min-height: 360px;
+  padding: 24px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+.chart-error { color: var(--red); }
 
 @media (max-width: 920px) {
   .topbar { align-items: flex-start; }
@@ -430,4 +499,11 @@ tbody tr:hover { background: #171b17; }
   }
   .page-jump { margin-left: 0; }
   .detail-grid { grid-template-columns: 1fr; }
+  #detail-content { padding: 14px; }
+  .funding-chart-head { display: block; }
+  .chart-window-picker { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 12px; }
+  .chart-window-button { width: 100%; padding: 0 4px; }
+  .funding-chart-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .funding-chart-summary > div:nth-child(2) { border-right: 0; }
+  .funding-chart-summary > div:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
 }

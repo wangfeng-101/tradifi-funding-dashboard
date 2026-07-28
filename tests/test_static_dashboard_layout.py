@@ -76,6 +76,15 @@ class StaticDashboardLayoutTests(unittest.TestCase):
         self.assertIn('.error-banner[data-level="warning"]', self.style)
         self.assertIn('.error-banner[data-level="error"]', self.style)
 
+    def test_detail_table_is_replaced_by_lazy_loaded_funding_chart(self):
+        self.assertNotIn('class="window-detail"', self.script)
+        self.assertIn('id="funding-chart"', self.script)
+        self.assertIn("累计 Funding 差值", self.script)
+        self.assertIn("单期 Funding 差值", self.script)
+        self.assertIn("data-chart-window", self.script)
+        self.assertIn("./data/funding/${encodeURIComponent(exchange)}.json", self.script)
+        self.assertIn(".funding-chart-svg", self.style)
+
 
 if __name__ == "__main__":
     unittest.main()

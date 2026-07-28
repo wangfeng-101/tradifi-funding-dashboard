@@ -16,6 +16,7 @@ def main() -> int:
     for name in ("index.html", "style.css", "script.js", "_headers"):
         shutil.copy2(ROOT / name, DIST / name)
     shutil.copy2(ROOT / "data" / "dashboard.json", DIST / "data" / "dashboard.json")
+    shutil.copytree(ROOT / "data" / "funding", DIST / "data" / "funding")
     print(f"built {DIST}")
     return 0
 

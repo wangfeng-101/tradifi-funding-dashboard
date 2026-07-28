@@ -5,6 +5,7 @@ PROJECT_DIR="${TRADIFI_PROJECT_DIR:-/home/wangfeng/workspace/refresh_tradfi}"
 PYTHON_BIN="${PYTHON_BIN:-/home/wangfeng/.local/share/uv/python/cpython-3.11-linux-x86_64-gnu/bin/python3.11}"
 LOCK_FILE="${TRADIFI_LOCK_FILE:-/tmp/tradifi-dashboard-update.lock}"
 DASHBOARD_FILE="${PROJECT_DIR}/data/dashboard.json"
+FUNDING_DIR="${PROJECT_DIR}/data/funding"
 
 log() {
   printf '[%s] %s\n' "$(date --utc '+%Y-%m-%dT%H:%M:%SZ')" "$*"
@@ -24,7 +25,9 @@ fi
 cd "${PROJECT_DIR}"
 
 backup_file="$(mktemp "${TMPDIR:-/tmp}/tradifi-dashboard.XXXXXX.json")"
+backup_funding_dir="$(mktemp -d "${TMPDIR:-/tmp}/tradifi-funding.XXXXXX")"
 had_dashboard=0
+had_funding=0
 validated=0
 
 backup_dashboard() {
@@ -34,6 +37,13 @@ backup_dashboard() {
   else
     : >"${backup_file}"
     had_dashboard=0
+  fi
+  rm -rf -- "${backup_funding_dir:?}/"*
+  if [[ -d "${FUNDING_DIR}" ]]; then
+    cp -a -- "${FUNDING_DIR}/." "${backup_funding_dir}/"
+    had_funding=1
+  else
+    had_funding=0
   fi
 }
 
@@ -47,8 +57,17 @@ cleanup() {
       rm -f -- "${DASHBOARD_FILE}"
       log "update failed; removed the unvalidated data/dashboard.json"
     fi
+    rm -rf -- "${FUNDING_DIR}"
+    if [[ "${had_funding}" -eq 1 ]]; then
+      mkdir -p -- "${FUNDING_DIR}"
+      cp -a -- "${backup_funding_dir}/." "${FUNDING_DIR}/"
+      log "update failed; restored the previous data/funding series"
+    else
+      log "update failed; removed unvalidated data/funding series"
+    fi
   fi
   rm -f -- "${backup_file}"
+  rm -rf -- "${backup_funding_dir}"
   exit "${exit_code}"
 }
 trap cleanup EXIT
@@ -83,7 +102,7 @@ log "validating generated data"
 "${PYTHON_BIN}" deploy/validate_dashboard.py
 validated=1
 
-git add -- data/dashboard.json
+git add -- data/dashboard.json data/funding
 if git diff --cached --quiet; then
   log "dashboard data is unchanged; no commit created"
 else

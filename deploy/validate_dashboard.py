@@ -72,6 +72,82 @@ def opportunity_has_turnover(item: dict[str, Any], exchange: str) -> bool:
         return False
 
 
+def validate_funding_series(
+    project_dir: Path,
+    dashboard: dict[str, Any],
+    opportunities: list[dict[str, Any]],
+) -> dict[str, dict[str, int]]:
+    required_symbols: dict[str, set[str]] = {}
+    for item in opportunities:
+        venues = item.get("venues")
+        symbols = item.get("symbols")
+        if not isinstance(venues, list) or not isinstance(symbols, dict):
+            continue
+        for venue in venues:
+            if not isinstance(venue, dict) or venue.get("market") != "perp":
+                continue
+            exchange = str(venue.get("exchange") or "").lower()
+            key = str(venue.get("key") or "")
+            symbol = str(symbols.get(key) or "").strip()
+            if exchange and symbol:
+                required_symbols.setdefault(exchange, set()).add(symbol)
+
+    stale_exchanges = {
+        str(exchange).lower()
+        for exchange in dashboard.get("stale_exchanges", [])
+        if exchange
+    }
+    generated_at = dashboard.get("generated_at")
+    summary: dict[str, dict[str, int]] = {}
+
+    for exchange, symbols in sorted(required_symbols.items()):
+        payload = load_json(
+            project_dir / "data" / "funding" / f"{exchange}.json"
+        )
+        series = payload.get("series")
+        require(
+            isinstance(series, dict) and len(series) > 0,
+            f"funding series is empty: {exchange}",
+        )
+        if exchange not in stale_exchanges:
+            require(
+                payload.get("generated_at") == generated_at,
+                f"funding series timestamp does not match dashboard: {exchange}",
+            )
+
+        missing = sorted(symbols - set(series))
+        require(
+            not missing,
+            f"funding series is missing {exchange} symbols: {missing[:10]}",
+        )
+
+        point_count = 0
+        for symbol in symbols:
+            points = series.get(symbol)
+            require(
+                isinstance(points, list) and len(points) > 0,
+                f"funding series has no points: {exchange} {symbol}",
+            )
+            require(
+                all(
+                    isinstance(point, list)
+                    and len(point) == 2
+                    and isinstance(point[0], (int, float))
+                    and isinstance(point[1], (int, float))
+                    for point in points
+                ),
+                f"funding series has invalid points: {exchange} {symbol}",
+            )
+            point_count += len(points)
+
+        summary[exchange] = {
+            "symbols": len(symbols),
+            "points": point_count,
+        }
+
+    return summary
+
+
 def validate(project_dir: Path) -> dict[str, Any]:
     dashboard = load_json(project_dir / "data" / "dashboard.json")
     opportunities = dashboard.get("opportunities")
@@ -80,6 +156,11 @@ def validate(project_dir: Path) -> dict[str, Any]:
         "dashboard opportunities must contain at least one record",
     )
     typed_opportunities = [item for item in opportunities if isinstance(item, dict)]
+    funding_series = validate_funding_series(
+        project_dir,
+        dashboard,
+        typed_opportunities,
+    )
 
     dashboard_errors = error_mentions(
         dashboard.get("errors", []),
@@ -212,6 +293,7 @@ def validate(project_dir: Path) -> dict[str, Any]:
     return {
         "generated_at": dashboard.get("generated_at", ""),
         "opportunities": len(opportunities),
+        "funding_series": funding_series,
         "binance": {
             **exchange_counts["binance"],
             "active_contracts": int(

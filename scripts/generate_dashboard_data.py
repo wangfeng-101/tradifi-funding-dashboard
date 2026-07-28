@@ -14,6 +14,10 @@ DATA_PATH = PROJECT_DIR / "data" / "dashboard.json"
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from dashboard_core import build_payload  # noqa: E402
+from funding_series import (  # noqa: E402
+    load_funding_series_payloads,
+    write_funding_series_payloads,
+)
 from turnover import refresh_turnover_cache  # noqa: E402
 
 
@@ -148,9 +152,19 @@ def main() -> int:
     payload = preserve_missing_exchange_data(payload, previous)
     validate(payload, previous)
     write_payload(payload)
+    funding_series, funding_series_errors = load_funding_series_payloads(
+        payload["generated_at"]
+    )
+    write_funding_series_payloads(funding_series)
+    if funding_series_errors:
+        print(
+            "funding series kept previous files for unavailable exchanges: "
+            + "; ".join(funding_series_errors)
+        )
     print(
         f"wrote {DATA_PATH} opportunities={len(payload['opportunities'])} "
-        f"errors={len(payload.get('errors', []))}"
+        f"errors={len(payload.get('errors', []))} "
+        f"funding_series_exchanges={len(funding_series)}"
     )
     return 0
 

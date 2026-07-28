@@ -17,6 +17,10 @@ const state = {
   page: 1,
   pageSize: 100,
   loadError: "",
+  fundingSeriesCache: new Map(),
+  detailOpportunityId: "",
+  detailWindow: "",
+  detailRenderToken: 0,
 };
 
 const WINDOW_DAYS = {
@@ -473,34 +477,257 @@ function detailPanel(opportunity, venue) {
   `;
 }
 
+function chartWindowButtons(selectedWindow) {
+  return state.data.windows.map((window) => `
+    <button
+      class="chart-window-button"
+      type="button"
+      data-chart-window="${escapeHtml(window)}"
+      aria-pressed="${window === selectedWindow}"
+    >${escapeHtml(state.data.window_labels[window] || window)}</button>
+  `).join("");
+}
+
+async function loadFundingSeries(exchange) {
+  if (state.fundingSeriesCache.has(exchange)) {
+    return state.fundingSeriesCache.get(exchange);
+  }
+
+  const dataUrl = new URL(`./data/funding/${encodeURIComponent(exchange)}.json`, window.location.href);
+  dataUrl.searchParams.set("v", state.data?.generated_at || "");
+  const response = await fetch(dataUrl, { cache: "force-cache" });
+  if (!response.ok) throw new Error(`${exchangeLabel(exchange)} 历史数据 HTTP ${response.status}`);
+  const payload = await response.json();
+  const series = payload?.series || {};
+  state.fundingSeriesCache.set(exchange, series);
+  return series;
+}
+
+async function fundingPointsForVenue(opportunity, venue) {
+  if (venue.market === "spot") return [];
+  const series = await loadFundingSeries(venue.exchange);
+  const symbol = opportunity.symbols?.[venue.key] || "";
+  return (series[symbol] || [])
+    .map(([timestamp, rate]) => [Number(timestamp), Number(rate)])
+    .filter(([timestamp, rate]) => Number.isFinite(timestamp) && Number.isFinite(rate));
+}
+
+function comparisonFundingPoints(opportunity, windowData, venuePoints) {
+  const startTime = new Date(windowData.start_time).getTime();
+  const endTime = new Date(windowData.end_time).getTime();
+  const buckets = new Map();
+
+  venuePoints.forEach((points, venueIndex) => {
+    points.forEach(([timestamp, rate]) => {
+      if (timestamp < startTime || timestamp > endTime) return;
+      const minute = Math.round(timestamp / 60_000) * 60_000;
+      const values = buckets.get(minute) || [0, 0];
+      values[venueIndex] += rate;
+      buckets.set(minute, values);
+    });
+  });
+
+  let cumulative = 0;
+  return [...buckets.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([timestamp, rates]) => {
+      const difference = rates[0] - rates[1];
+      cumulative += difference;
+      return { timestamp, difference, cumulative, rates };
+    });
+}
+
+function chartRange(values) {
+  let minimum = Math.min(0, ...values);
+  let maximum = Math.max(0, ...values);
+  if (minimum === maximum) {
+    const padding = Math.max(Math.abs(minimum) * 0.2, 0.001);
+    return { minimum: minimum - padding, maximum: maximum + padding };
+  }
+  const padding = (maximum - minimum) * 0.08;
+  return { minimum: minimum - padding, maximum: maximum + padding };
+}
+
+function formatAxisPct(value) {
+  const absolute = Math.abs(value);
+  const digits = absolute >= 10 ? 1 : absolute >= 1 ? 2 : absolute >= 0.1 ? 3 : 4;
+  return `${value.toFixed(digits)}%`;
+}
+
+function formatChartTime(timestamp) {
+  return new Date(timestamp).toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).replaceAll("/", "-");
+}
+
+function fundingChartSvg(points, opportunity, width) {
+  const height = 360;
+  const left = width < 480 ? 48 : 58;
+  const right = 14;
+  const plotWidth = Math.max(1, width - left - right);
+  const cumulativeTop = 34;
+  const cumulativeBottom = 164;
+  const differenceTop = 218;
+  const differenceBottom = 326;
+  const firstTimestamp = points[0].timestamp;
+  const lastTimestamp = points.at(-1).timestamp;
+  const timeSpan = Math.max(1, lastTimestamp - firstTimestamp);
+  const x = (timestamp) => lastTimestamp === firstTimestamp
+    ? left + plotWidth / 2
+    : left + (timestamp - firstTimestamp) / timeSpan * plotWidth;
+
+  const cumulativeRange = chartRange(points.map((point) => point.cumulative));
+  const differenceRange = chartRange(points.map((point) => point.difference));
+  const y = (value, range, top, bottom) => (
+    bottom - (value - range.minimum) / (range.maximum - range.minimum) * (bottom - top)
+  );
+  const cumulativeY = (value) => y(value, cumulativeRange, cumulativeTop, cumulativeBottom);
+  const differenceY = (value) => y(value, differenceRange, differenceTop, differenceBottom);
+  const cumulativePath = points.map((point, index) => (
+    `${index ? "L" : "M"}${x(point.timestamp).toFixed(2)},${cumulativeY(point.cumulative).toFixed(2)}`
+  )).join(" ");
+  const finalCumulative = points.at(-1).cumulative;
+  const lineClass = finalCumulative >= 0 ? "chart-positive" : "chart-negative";
+
+  const grid = (range, top, bottom) => [range.maximum, (range.maximum + range.minimum) / 2, range.minimum]
+    .map((value) => {
+      const position = y(value, range, top, bottom);
+      return `
+        <line class="chart-grid-line" x1="${left}" y1="${position}" x2="${width - right}" y2="${position}"></line>
+        <text class="chart-axis-label" x="${left - 7}" y="${position + 4}" text-anchor="end">${escapeHtml(formatAxisPct(value))}</text>
+      `;
+    }).join("");
+
+  const barWidth = Math.max(1, Math.min(12, plotWidth / Math.max(points.length, 1) * 0.68));
+  const differenceZero = differenceY(0);
+  const bars = points.map((point) => {
+    const position = differenceY(point.difference);
+    const top = Math.min(position, differenceZero);
+    const barHeight = Math.max(1, Math.abs(position - differenceZero));
+    const className = point.difference >= 0 ? "chart-positive-fill" : "chart-negative-fill";
+    return `
+      <rect class="${className}" x="${(x(point.timestamp) - barWidth / 2).toFixed(2)}" y="${top.toFixed(2)}"
+        width="${barWidth.toFixed(2)}" height="${barHeight.toFixed(2)}">
+        <title>${escapeHtml(formatChartTime(point.timestamp))} 单期 ${formatPct(point.difference)}；累计 ${formatPct(point.cumulative)}</title>
+      </rect>
+    `;
+  }).join("");
+
+  const pointMarkers = points.length <= 150 ? points.map((point) => `
+    <circle class="${lineClass}" cx="${x(point.timestamp).toFixed(2)}" cy="${cumulativeY(point.cumulative).toFixed(2)}" r="2.4">
+      <title>${escapeHtml(formatChartTime(point.timestamp))} 累计 ${formatPct(point.cumulative)}</title>
+    </circle>
+  `).join("") : "";
+
+  const tickCount = width < 480 ? 3 : 5;
+  const tickIndexes = [...new Set(Array.from({ length: tickCount }, (_, index) => (
+    Math.round(index * (points.length - 1) / Math.max(1, tickCount - 1))
+  )))];
+  const timeTicks = tickIndexes.map((index) => {
+    const point = points[index];
+    const anchor = index === 0 ? "start" : index === points.length - 1 ? "end" : "middle";
+    return `
+      <line class="chart-time-tick" x1="${x(point.timestamp)}" y1="${differenceBottom}" x2="${x(point.timestamp)}" y2="${differenceBottom + 5}"></line>
+      <text class="chart-time-label" x="${x(point.timestamp)}" y="349" text-anchor="${anchor}">${escapeHtml(formatChartTime(point.timestamp))}</text>
+    `;
+  }).join("");
+
+  return `
+    <svg class="funding-chart-svg" viewBox="0 0 ${width} ${height}" width="100%" height="${height}"
+      role="img" aria-label="${escapeHtml(`${opportunity.underlying} Funding 差值走势图`)}">
+      <title>${escapeHtml(`${opportunity.underlying}：${differenceBasis(opportunity)}`)}</title>
+      <text class="chart-section-label" x="${left}" y="18">累计 Funding 差值</text>
+      ${grid(cumulativeRange, cumulativeTop, cumulativeBottom)}
+      <line class="chart-zero-line" x1="${left}" y1="${cumulativeY(0)}" x2="${width - right}" y2="${cumulativeY(0)}"></line>
+      <path class="chart-line ${lineClass}" d="${cumulativePath}"></path>
+      ${pointMarkers}
+      <text class="chart-section-label" x="${left}" y="202">单期 Funding 差值</text>
+      ${grid(differenceRange, differenceTop, differenceBottom)}
+      <line class="chart-zero-line" x1="${left}" y1="${differenceZero}" x2="${width - right}" y2="${differenceZero}"></line>
+      ${bars}
+      ${timeTicks}
+    </svg>
+  `;
+}
+
+function renderFundingChartSummary(opportunity, window, points) {
+  const summary = elements.detailContent.querySelector("#funding-chart-summary");
+  const windowData = opportunity.windows?.[window];
+  if (!summary || !windowData) return;
+  const cumulative = points.length ? points.at(-1).cumulative : fundingDifference(opportunity, windowData);
+  const annualized = annualizedSignedDiff(windowData);
+  summary.innerHTML = `
+    <div><span>累计 Funding 差值</span><strong class="${signedValueClass(cumulative)}">${formatPct(cumulative)}</strong></div>
+    <div><span>年化差值</span><strong class="${signedValueClass(annualized)}">${formatPct(annualized)}</strong></div>
+    <div><span>比较方向</span><strong>${escapeHtml(differenceBasis(opportunity))}</strong></div>
+    <div><span>数据范围</span><strong>${Number(windowData.elapsed_days || 0).toFixed(2)} 天 · ${isFullWindow(opportunity, windowData, window) ? "完整" : "不足"}</strong></div>
+  `;
+}
+
+async function renderFundingChart(opportunity, window) {
+  const chart = elements.detailContent.querySelector("#funding-chart");
+  if (!chart) return;
+  const windowData = opportunity.windows?.[window];
+  if (!windowData) {
+    chart.innerHTML = '<div class="chart-empty">当前周期没有汇总数据</div>';
+    return;
+  }
+
+  elements.detailContent.querySelectorAll("[data-chart-window]").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.chartWindow === window));
+  });
+  chart.innerHTML = '<div class="chart-loading">正在读取 Funding 历史…</div>';
+  const renderToken = ++state.detailRenderToken;
+
+  try {
+    const venuePoints = await Promise.all(
+      opportunity.venues.map((venue) => fundingPointsForVenue(opportunity, venue)),
+    );
+    if (renderToken !== state.detailRenderToken || state.detailOpportunityId !== opportunity.id) return;
+    const points = comparisonFundingPoints(opportunity, windowData, venuePoints);
+    renderFundingChartSummary(opportunity, window, points);
+    if (!points.length) {
+      chart.innerHTML = '<div class="chart-empty">所选周期内没有 Funding 结算记录</div>';
+      return;
+    }
+    const width = Math.max(300, Math.round(chart.getBoundingClientRect().width || 720));
+    chart.innerHTML = fundingChartSvg(points, opportunity, width);
+  } catch (error) {
+    if (renderToken !== state.detailRenderToken) return;
+    renderFundingChartSummary(opportunity, window, []);
+    chart.innerHTML = `<div class="chart-error">历史曲线暂不可用：${escapeHtml(error.message)}。上方汇总数据仍可使用。</div>`;
+  }
+}
+
 function openDetail(id) {
   const opportunity = state.data.opportunities.find((item) => item.id === id);
   if (!opportunity) return;
+  state.detailOpportunityId = id;
+  state.detailWindow = state.data.windows.includes(state.window) ? state.window : state.data.windows[0];
   elements.detailPair.textContent = opportunity.venues.map(venueLabel).join(" / ");
   elements.detailTitle.textContent = opportunity.underlying;
-  const windowRows = state.data.windows.map((window) => {
-    const item = opportunity.windows[window];
-    if (!item) return "";
-    return `
-      <tr>
-        <td>${escapeHtml(state.data.window_labels[window])}</td>
-        <td><span class="receive-text">空 ${escapeHtml(legLabel(item.short_leg))}</span><br><span class="pay-text">多 ${escapeHtml(legLabel(item.long_leg))}</span></td>
-        <td class="spread-value ${signedValueClass(annualizedSignedDiff(item))}">${formatPct(annualizedSignedDiff(item))}<br><small>${escapeHtml(differenceBasis(opportunity))}</small></td>
-        <td class="spread-value ${signedValueClass(fundingDifference(opportunity, item))}">${formatPct(fundingDifference(opportunity, item))}<br><small>${escapeHtml(differenceBasis(opportunity))}</small></td>
-        <td>${Number(item.elapsed_days || 0).toFixed(2)} 天 · ${isFullWindow(opportunity, item, window) ? "完整" : "不足"}</td>
-      </tr>
-    `;
-  }).join("");
   elements.detailContent.innerHTML = `
     <div class="detail-grid">${opportunity.venues.map((venue) => detailPanel(opportunity, venue)).join("")}</div>
-    <div class="detail-table-scroll">
-      <table class="window-detail">
-        <thead><tr><th>周期</th><th>建议方向</th><th>年化差值</th><th>Funding 差值</th><th>数据</th></tr></thead>
-        <tbody>${windowRows}</tbody>
-      </table>
-    </div>
+    <section class="funding-chart-section" aria-labelledby="funding-chart-title">
+      <div class="funding-chart-head">
+        <div>
+          <h3 id="funding-chart-title">Funding 差值走势</h3>
+          <p>${escapeHtml(differenceBasis(opportunity))}</p>
+        </div>
+        <div class="chart-window-picker" role="group" aria-label="选择比较周期">
+          ${chartWindowButtons(state.detailWindow)}
+        </div>
+      </div>
+      <div id="funding-chart-summary" class="funding-chart-summary"></div>
+      <div id="funding-chart" class="funding-chart" aria-live="polite"></div>
+    </section>
   `;
   elements.dialog.showModal();
+  renderFundingChart(opportunity, state.detailWindow);
 }
 
 function exportCsv() {
@@ -540,7 +767,9 @@ async function loadData() {
     dataUrl.searchParams.set("v", Date.now().toString());
     const response = await fetch(dataUrl, { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    state.data = await response.json();
+    const nextData = await response.json();
+    if (state.data?.generated_at !== nextData.generated_at) state.fundingSeriesCache.clear();
+    state.data = nextData;
     state.loadError = "";
     if (!state.data.windows.includes(state.window)) state.window = state.data.windows[0] || "1d";
     if (!["spread_desc", "spread_asc", "symbol_asc"].includes(state.sort)) state.sort = "spread_desc";
@@ -576,6 +805,16 @@ elements.strategyTabs.addEventListener("click", (event) => {
 elements.body.addEventListener("click", (event) => {
   const button = event.target.closest("[data-detail]");
   if (button) openDetail(button.dataset.detail);
+});
+elements.detailContent.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-chart-window]");
+  if (!button || !state.detailOpportunityId) return;
+  const opportunity = state.data.opportunities.find(
+    (item) => item.id === state.detailOpportunityId,
+  );
+  if (!opportunity || !opportunity.windows?.[button.dataset.chartWindow]) return;
+  state.detailWindow = button.dataset.chartWindow;
+  renderFundingChart(opportunity, state.detailWindow);
 });
 elements.search.addEventListener("input", () => { state.search = elements.search.value; state.page = 1; render(); });
 elements.minSpread.addEventListener("input", () => {
@@ -706,7 +945,23 @@ elements.mobileFilterToggle.addEventListener("click", () => {
   elements.mobileFilterToggle.title = collapsed ? "展开筛选" : "收起筛选";
 });
 elements.closeDialog.addEventListener("click", () => elements.dialog.close());
+elements.dialog.addEventListener("close", () => {
+  state.detailOpportunityId = "";
+  state.detailRenderToken += 1;
+});
 elements.dialog.addEventListener("click", (event) => { if (event.target === elements.dialog) elements.dialog.close(); });
+
+let detailResizeTimer;
+window.addEventListener("resize", () => {
+  if (!elements.dialog.open || !state.detailOpportunityId) return;
+  window.clearTimeout(detailResizeTimer);
+  detailResizeTimer = window.setTimeout(() => {
+    const opportunity = state.data.opportunities.find(
+      (item) => item.id === state.detailOpportunityId,
+    );
+    if (opportunity) renderFundingChart(opportunity, state.detailWindow);
+  }, 160);
+});
 
 if (window.matchMedia("(max-width: 620px)").matches) elements.filters.classList.add("mobile-collapsed");
 window.setInterval(renderDataHealth, DATA_HEALTH_CHECK_INTERVAL_MS);

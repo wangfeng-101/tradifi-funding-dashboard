@@ -2,6 +2,8 @@
 
 这是可直接部署的静态版本。访问者只会下载 HTML、CSS、JavaScript 和已经生成的
 `data/dashboard.json`，不需要 Python 服务、开放端口或 Cloudflare Tunnel。
+打开某个候选的详情时，页面才会按需读取对应交易所的
+`data/funding/<exchange>.json`，绘制累计 Funding 差值折线和单期差值柱状图。
 
 ## 数据更新方式
 
@@ -10,13 +12,17 @@ GitHub Actions 每 8 小时执行一次：
 1. 从 Binance、OKX、Gate、Bitget、KuCoin、Bybit、Phemex 的公开接口采集 TradFi 产品、funding 和 24h 成交额。
 2. 使用统一统计区间生成套利候选。
 3. 校验三个策略均有数据，且记录数没有异常骤降。
-4. 更新 `data/dashboard.json` 并部署 GitHub Pages。
+4. 更新 `data/dashboard.json` 和按交易所拆分的 Funding 历史文件。
+5. 校验汇总数据引用的永续合约都有历史记录，然后部署 GitHub Pages。
 
 采集失败不会用空数据覆盖上一版。所有脚本只访问公开接口，不需要 API Key，也不要在网页仓库中保存交易密钥。
 
 网页会根据 `dashboard.json` 的 `generated_at` 检查数据新鲜度。距上次成功更新超过
 10 小时显示黄色预警，超过 18 小时显示红色严重告警。页面每分钟在本地重新计算一次，
 不会因此发起额外的数据请求。
+
+详情图支持最近 1、3、7、14、30 天和共同上线至今。历史文件按交易所懒加载，并在
+当前浏览器会话中缓存；首页不会一次下载全部历史数据。
 
 ## 本地预览
 
