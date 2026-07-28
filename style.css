@@ -200,7 +200,24 @@ h1 { font-size: 17px; line-height: 1.25; }
 .dot { display: inline-block; width: 6px; height: 6px; margin-right: 5px; border-radius: 50%; }
 .dot.receive { background: var(--green); }
 .dot.pay { background: var(--red); }
-.error-banner { margin: 0 0 12px; padding: 10px; border: 1px solid #6b403d; color: #ffaaa6; background: #241817; }
+.error-banner {
+  margin: 0 0 12px;
+  padding: 10px;
+  border: 1px solid #6b403d;
+  color: #ffaaa6;
+  background: #241817;
+  line-height: 1.55;
+}
+.error-banner[data-level="warning"] {
+  border-color: #78652d;
+  color: #f2d277;
+  background: #211f15;
+}
+.error-banner[data-level="error"] {
+  border-color: #6b403d;
+  color: #ffaaa6;
+  background: #241817;
+}
 
 .table-shell { min-height: 370px; overflow-x: auto; border-top: 1px solid var(--line); }
 table { width: 100%; min-width: 1560px; border-collapse: collapse; }

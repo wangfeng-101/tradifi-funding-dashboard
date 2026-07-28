@@ -11,6 +11,7 @@ class StaticDashboardLayoutTests(unittest.TestCase):
     def setUpClass(cls):
         cls.index = (ROOT / "index.html").read_text(encoding="utf-8")
         cls.script = (ROOT / "script.js").read_text(encoding="utf-8")
+        cls.style = (ROOT / "style.css").read_text(encoding="utf-8")
 
     def test_main_table_contains_all_period_columns(self):
         for window in WINDOWS:
@@ -61,6 +62,19 @@ class StaticDashboardLayoutTests(unittest.TestCase):
         self.assertIn("function jumpToPage()", self.script)
         self.assertIn('event.key !== "Enter"', self.script)
         self.assertIn("targetPage <= totalPages", self.script)
+
+    def test_stale_data_alerts_cover_missed_update_cycles(self):
+        self.assertIn("DATA_STALE_WARNING_MS = 10 * 60 * 60 * 1000", self.script)
+        self.assertIn("DATA_STALE_CRITICAL_MS = 18 * 60 * 60 * 1000", self.script)
+        self.assertIn("function dataFreshnessAlert(now = Date.now())", self.script)
+        self.assertIn("function renderDataHealth()", self.script)
+        self.assertIn(
+            "window.setInterval(renderDataHealth, DATA_HEALTH_CHECK_INTERVAL_MS)",
+            self.script,
+        )
+        self.assertIn('role="alert"', self.index)
+        self.assertIn('.error-banner[data-level="warning"]', self.style)
+        self.assertIn('.error-banner[data-level="error"]', self.style)
 
 
 if __name__ == "__main__":

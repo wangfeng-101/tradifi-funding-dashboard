@@ -16,6 +16,7 @@ const state = {
   sort: new URLSearchParams(window.location.search).get("sort") || "spread_desc",
   page: 1,
   pageSize: 100,
+  loadError: "",
 };
 
 const WINDOW_DAYS = {
@@ -25,6 +26,10 @@ const WINDOW_DAYS = {
   "14d": 14,
   "30d": 30,
 };
+
+const DATA_STALE_WARNING_MS = 10 * 60 * 60 * 1000;
+const DATA_STALE_CRITICAL_MS = 18 * 60 * 60 * 1000;
+const DATA_HEALTH_CHECK_INTERVAL_MS = 60 * 1000;
 
 const elements = {
   dataTime: document.querySelector("#data-time"),
@@ -125,6 +130,83 @@ function formatDate(value, includeTime = false) {
     day: "2-digit",
     ...(includeTime ? { hour: "2-digit", minute: "2-digit", hour12: false } : {}),
   }).format(date);
+}
+
+function formatElapsedTime(milliseconds) {
+  let remainingMinutes = Math.max(0, Math.floor(milliseconds / 60_000));
+  const days = Math.floor(remainingMinutes / (24 * 60));
+  remainingMinutes -= days * 24 * 60;
+  const hours = Math.floor(remainingMinutes / 60);
+  const minutes = remainingMinutes % 60;
+  const parts = [];
+
+  if (days) parts.push(`${days} 天`);
+  if (hours) parts.push(`${hours} 小时`);
+  if (!days && minutes) parts.push(`${minutes} 分钟`);
+  return parts.join(" ") || "不足 1 分钟";
+}
+
+function dataFreshnessAlert(now = Date.now()) {
+  if (!state.data) return null;
+
+  const generatedAt = Date.parse(state.data.generated_at || "");
+  if (!Number.isFinite(generatedAt)) {
+    return {
+      level: "error",
+      message: "无法确认数据更新时间，请检查 dashboard.json 的 generated_at 字段。",
+    };
+  }
+
+  const age = Math.max(0, now - generatedAt);
+  if (age < DATA_STALE_WARNING_MS) return null;
+
+  const lastUpdated = formatDate(state.data.generated_at, true);
+  const elapsed = formatElapsedTime(age);
+  if (age >= DATA_STALE_CRITICAL_MS) {
+    return {
+      level: "error",
+      message: `数据已严重过期：距上次成功更新已 ${elapsed}（最后更新 ${lastUpdated}），可能连续漏掉多个更新周期。`,
+    };
+  }
+
+  return {
+    level: "warning",
+    message: `数据更新延迟：距上次成功更新已 ${elapsed}（最后更新 ${lastUpdated}），可能漏掉 1 个更新周期。`,
+  };
+}
+
+function renderDataHealth() {
+  const messages = [];
+  let level = "none";
+
+  if (state.loadError) {
+    messages.push(state.loadError);
+    level = "error";
+  }
+
+  const dataErrors = [
+    ...(Array.isArray(state.data?.errors) ? state.data.errors : []),
+    ...(Array.isArray(state.data?.turnover_metadata?.errors) ? state.data.turnover_metadata.errors : []),
+  ].filter(Boolean);
+  if (dataErrors.length) {
+    messages.push(...dataErrors);
+    level = "error";
+  }
+
+  const freshness = dataFreshnessAlert();
+  if (freshness) {
+    messages.push(freshness.message);
+    if (level === "none" || freshness.level === "error") level = freshness.level;
+  }
+
+  elements.errorBanner.hidden = messages.length === 0;
+  if (messages.length) {
+    elements.errorBanner.dataset.level = level;
+    elements.errorBanner.textContent = messages.join("；");
+  } else {
+    delete elements.errorBanner.dataset.level;
+    elements.errorBanner.textContent = "";
+  }
 }
 
 function currentRows() {
@@ -459,6 +541,7 @@ async function loadData() {
     const response = await fetch(dataUrl, { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     state.data = await response.json();
+    state.loadError = "";
     if (!state.data.windows.includes(state.window)) state.window = state.data.windows[0] || "1d";
     if (!["spread_desc", "spread_asc", "symbol_asc"].includes(state.sort)) state.sort = "spread_desc";
     renderExchangeStatus();
@@ -467,13 +550,11 @@ async function loadData() {
     elements.dataTime.textContent = metadata?.calculation_end_time_utc
       ? `Funding ${formatDate(metadata.calculation_end_time_utc, true)} · 成交额 ${formatDate(turnoverTime, true)}`
       : `读取于 ${formatDate(state.data.generated_at, true)}`;
-    const dataErrors = state.data.errors.concat(state.data.turnover_metadata?.errors || []);
-    elements.errorBanner.hidden = dataErrors.length === 0;
-    elements.errorBanner.textContent = dataErrors.join("；");
+    renderDataHealth();
     render();
   } catch (error) {
-    elements.errorBanner.hidden = false;
-    elements.errorBanner.textContent = `数据读取失败：${error.message}`;
+    state.loadError = `数据读取失败：${error.message}`;
+    renderDataHealth();
   } finally {
     elements.refresh.disabled = false;
     elements.refresh.textContent = "↻";
@@ -628,4 +709,5 @@ elements.closeDialog.addEventListener("click", () => elements.dialog.close());
 elements.dialog.addEventListener("click", (event) => { if (event.target === elements.dialog) elements.dialog.close(); });
 
 if (window.matchMedia("(max-width: 620px)").matches) elements.filters.classList.add("mobile-collapsed");
+window.setInterval(renderDataHealth, DATA_HEALTH_CHECK_INTERVAL_MS);
 loadData();
